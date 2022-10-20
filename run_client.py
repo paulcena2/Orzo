@@ -1,3 +1,4 @@
+import queue
 
 import penne
 import moderngl
@@ -7,27 +8,6 @@ import numpy as np
 
 from tagliatelle.delegates import *
 from tagliatelle.windows import *
-
-
-def launch():
-    sender, receiver = multiprocessing.Pipe()
-    # process = multiprocessing.Process(target=GridWindow.run, args=())
-    process = multiprocessing.Process(target=CameraWindow.run, args=())
-    process.start()
-
-
-# def render(receiver):
-
-#     # main = threading.main_thread()
-#     # print(main)
-#     # asyncio.run_coroutine_threadsafe(mglw.run_window_config(Test), main)
-#     mglw.run_window_config(GridWindow)
-#     sphere = mglw.geometry.sphere()
-#     print(f"Sphere: {sphere}")
-#     while True:
-#         if receiver.poll(.1):
-#             update = receiver.recv()
-#             print(f"Update to render: {update}")
 
 
 del_hash = {
@@ -47,9 +27,18 @@ del_hash = {
     "document" : DocumentDelegate
 }
 
+
 def start():
-    client = penne.create_client("ws://localhost:50000", del_hash, on_connected=launch)
+
+    # Create Client and start rendering loop
+    client = penne.create_client("ws://localhost:50000", del_hash)
+    Window.client = client
+    Window.run()
+
+    # Wait for client thread to finish
     client.thread.join()
+    print(f"Finished Testing")
+
 
 if __name__ == "__main__":
     start()

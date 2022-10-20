@@ -2,146 +2,11 @@
 
 from __future__ import annotations
 from typing import TYPE_CHECKING, Callable
+from penne import Delegate, inject_methods, inject_signals
 if TYPE_CHECKING:
     from penne.messages import Message
     from penne.core import Client
 
-
-class Delegate(object):
-    """Parent class for all delegates
-    
-    Defines general methods that should be available for all delegates
-    
-    Attributes:
-        _client (Client): Client delegate is attached to
-        info (Message): Message containing all info on delegate
-        specifier (str): Keyword specifying delegate in state
-        signals (dict): Signals that can be called on delegate
-        __all__ (list): Specify public methods, used in show_methods()
-    """
-
-    def __init__(self, client: Client, message: Message, specifier: str):
-        self._client = client
-        self.info = message
-        self.specifier = specifier
-        self.signals = {}
-        self.__all__ = []
-    
-    def __repr__(self) -> str:
-        return f"{self.specifier} delegate | {self.info.id}"
-
-    # For all except Document Delegate
-    def on_new(self, message: Message):
-        pass
-
-    # For Document, Table, Entity, Plot, Material, Light Delegates
-    def on_update(self, message: Message):
-        pass
-
-    # For all except Document Delegate
-    def on_remove(self, message: Message):
-        pass
-
-
-    def show_methods(self):
-        """Show methods available on this delegate"""
-
-        print(f"-- Methods on {self} --")
-        print("--------------------------------------")
-        for name in self.__all__:
-            method = getattr(self, name)
-            print(f">> '{name}'\n{method.__doc__}")
-
-
-class InjectedMethod(object):
-    """Class for representing injected method in delegate
-
-    Attributes:
-        method (method): method to be called
-        injected (bool): attribute marking method as injected
-    """
-
-    def __init__(self, method_obj) -> None:
-        self.method = method_obj
-        self.injected = True
-
-    def __call__(self, *args, **kwds):
-        self.method(*args, **kwds)
-
-
-class LinkedMethod(object):
-    """Class linking target delegate and method's delegate 
-        
-    make a cleaner function call in injected method
-    
-    Attributes:
-        _obj_delegate (delegate): 
-            delgate method is being linked to
-        _method_delegate (MethodDelegate): 
-            the method's delegate 
-    """
-
-    def __init__(self, object_delegate: Delegate, method_delegate: Delegate):
-        self._obj_delegate = object_delegate
-        self._method_delegate = method_delegate
-
-    def __call__(self, on_done=None, *arguments):
-        self._method_delegate.invoke(self._obj_delegate, arguments, callback=on_done)
-
-
-def inject_methods(delegate: Delegate, methods: list):
-    """Inject methods into a delegate class
-
-    Args:
-        delegate_name (str): 
-            identifier for delegate to be modified
-        methods (list): 
-            list of method id's to inject
-    """
-
-    # Clear out old injected methods
-    for name in dir(delegate):
-        att = getattr(delegate, name)
-        if hasattr(att, "injected"):
-            print(f"Deleting: {name} in inject methods")
-            delattr(delegate, name)
-
-    state_methods = delegate._client.state["methods"] 
-    for id in methods:
-
-        # Get method delegate and manipulate name to exclude noo::
-        method = state_methods[tuple(id)]
-        name = method.info.name[5:]
-
-        # Create injected by linking delegates, and creating call method
-        linked = LinkedMethod(delegate, method)
-        injected = InjectedMethod(linked.__call__)
-
-        setattr(delegate, name, injected)
-
-
-def inject_signals(delegate: Delegate, signals: list[list[int]]):
-    """Method to inject signals into delegate
-
-    Args:
-        delegate (delegate): 
-            delegate object to be injected 
-        signals (list): 
-            list of signal id's to be injected
-    """
-
-    state_signals = delegate._client.state["signals"]
-    injected_signals = {}
-    for id in signals:
-        signal: SignalDelegate = state_signals[tuple(id)]
-        injected_signals[signal.info.name] = None
-    delegate.signals = injected_signals
-
-
-
-"""
-Default Delegates for Python Client
-"""
 
 class MethodDelegate(Delegate):
     """Delegate representing a method which can be invoked on the server
@@ -514,7 +379,13 @@ class DocumentDelegate(Delegate):
     pass
     
 class EntityDelegate(Delegate):
-    pass
+
+    def render_entity(self):
+        pass
+    
+    def on_new(self, message: Message):
+        print("New Entity Delegate")
+        self.client.callback_queue.put((self.render_entity, self))
 
 class PlotDelegate(Delegate):
     pass
