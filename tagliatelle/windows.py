@@ -251,9 +251,12 @@ class Window(mglw.WindowConfig):
         self.vbo = self.ctx.buffer(grid)
         self.vao = self.ctx.simple_vertex_array(self.prog, self.vbo, 'vert')
 
-        self.scene = self.load_scene("crate.obj")
+        # self.scene = self.load_scene("crate.obj")
+        self.scene = mglw.scene.Scene("Noodles Scene")
+        self.scene.nodes.append(mglw.scene.Node("Root"))
 
     def key_event(self, key, action, modifiers):
+        print(f"Key Event: {key}")
         keys = self.wnd.keys
 
         if self.camera_enabled:
@@ -286,7 +289,8 @@ class Window(mglw.WindowConfig):
         try:
             callback_info = Window.client.callback_queue.get(block=False)
             callback, args = callback_info
-            print(f"Callback in render: {callback}")
+            print(f"Callback in render: {callback} \n\tw/ args: {args}")
+            callback(self, *args)
         except queue.Empty:
             pass
 

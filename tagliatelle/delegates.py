@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 from typing import TYPE_CHECKING, Callable
-from penne import Delegate, inject_methods, inject_signals
 if TYPE_CHECKING:
     from penne.messages import Message
     from penne.core import Client
+
+from penne import Delegate, inject_methods, inject_signals
+import moderngl_window as mglw
 
 
 class MethodDelegate(Delegate):
@@ -380,12 +382,37 @@ class DocumentDelegate(Delegate):
     
 class EntityDelegate(Delegate):
 
-    def render_entity(self):
-        pass
+    def __init__(self, client: Client, message: Message, specifier: str):
+        super().__init__(client, message, specifier)
+        self.name = "No-Name Entity" if not hasattr(self.info, "name") else self.info.name
+
+    def render_entity(self, window):
+        
+        # Prepare Mesh
+        scene = window.scene
+        render_rep = self.info.render_rep
+        geometry = self.client.state["geometries"][render_rep.mesh].info
+        instances = render_rep.instances if hasattr(render_rep, "instances") else None
+        patch = geometry.patches[0] # Fragile?
+
+        noodle_material = self.client.state["materials"][patch.material].info
+        material = mglw.scene.Material()
+        attributes = patch.attributes
+        
+        view = self.client.state["bufferviews"][patch.attributes[0]["view"]].info
+        buffer = self.client.state["buffers"][view.source_buffer].info
+        vbo = window.ctx.buffer(buffer.inline_bytes)
+        vao = window.ctx.simple_vertex_array(window.prog, vbo, 'vert')
+        
+        mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material, attributes=attributes)
+        
+        # Add mesh as new node to scene graph
+        root = scene.find_node("Root")
+        root.add_child(mglw.scene.Node(self.name, mesh=mesh))
     
     def on_new(self, message: Message):
-        print("New Entity Delegate")
-        self.client.callback_queue.put((self.render_entity, self))
+        if hasattr(self.info, "render_rep"):
+            self.client.callback_queue.put((self.render_entity, []))
 
 class PlotDelegate(Delegate):
     pass
