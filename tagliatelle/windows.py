@@ -251,9 +251,11 @@ class Window(mglw.WindowConfig):
         self.vbo = self.ctx.buffer(grid)
         self.vao = self.ctx.simple_vertex_array(self.prog, self.vbo, 'vert')
 
-        # self.scene = self.load_scene("crate.obj")
+        self.model_scene = self.load_scene("crate.obj")
         self.scene = mglw.scene.Scene("Noodles Scene")
-        self.scene.nodes.append(mglw.scene.Node("Root"))
+        root = mglw.scene.Node("Root")
+        self.scene.nodes.append(root)
+        self.scene.root_nodes.append(root)
 
     def key_event(self, key, action, modifiers):
         print(f"Key Event: {key}")

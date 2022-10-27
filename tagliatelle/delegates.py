@@ -1,6 +1,7 @@
 """Module Defining Default Delegates and Delegate Related Classes"""
 
 from __future__ import annotations
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 if TYPE_CHECKING:
     from penne.messages import Message
@@ -8,13 +9,14 @@ if TYPE_CHECKING:
 
 from penne import Delegate, inject_methods, inject_signals
 import moderngl_window as mglw
+import moderngl
 
 
 class MethodDelegate(Delegate):
     """Delegate representing a method which can be invoked on the server
 
     Attributes:
-        _client (client object): 
+        client (client object): 
             client delegate is a part of 
         info (message): 
             message containing information on the method
@@ -25,7 +27,7 @@ class MethodDelegate(Delegate):
     """
 
     def __init__(self, client: Client, message: Message, specifier: str):
-        self._client = client
+        self.client = client
         self.info = message
         self.specifier = specifier
         self.context_map = {
@@ -53,7 +55,7 @@ class MethodDelegate(Delegate):
                 function to be called when complete
         """
         context = {self.context_map[on_delegate.specifier]: on_delegate.info.id}
-        self._client.invoke_method(self.info.id, args, context=context, on_done=callback)
+        self.client.invoke_method(self.info.id, args, context=context, on_done=callback)
 
 
     def __repr__(self) -> str:
@@ -69,7 +71,7 @@ class SignalDelegate(Delegate):
     """Delegate representing a signal coming from the server
 
     Attributes:
-        _client (Client): 
+        client (Client): 
             client delegate is a part of 
         info (message): 
             message containing information on the signal
@@ -78,7 +80,7 @@ class SignalDelegate(Delegate):
     """
     
     def __init__(self, client: Client, message: Message, specifier: str):
-        self._client = client
+        self.client = client
         self.info = message
         self.specifier = specifier
 
@@ -127,7 +129,7 @@ class TableDelegate(Delegate):
     To use the table, you must first subscribe 
 
     Attributes:
-        _client (Client): 
+        client (Client): 
             weak ref to client to invoke methods and such
         dataframe (Dataframe): 
             dataframe representing current state of the table
@@ -380,6 +382,48 @@ class TableDelegate(Delegate):
 class DocumentDelegate(Delegate):
     pass
     
+
+@dataclass
+class FormatInfo:
+    num_components: int
+    format: str
+    size: int # in bytes
+
+
+FORMAT_MAP = {
+    # (num components, format per component, size per component)
+    "U8": FormatInfo(1, 'u1', 1),
+    "U16": FormatInfo(1, 'u2', 2),
+    "U32": FormatInfo(1, 'u4', 4),
+    "U16VEC2": FormatInfo(2, 'u2', 2),
+    "U8VEC4": FormatInfo(4, 'u1', 1),
+    "VEC2": FormatInfo(2, 'f', 4),
+    "VEC3": FormatInfo(3, 'f', 4),
+    "VEC4": FormatInfo(4, 'f', 4)
+}
+
+def reformat_attr(attr: dict):
+    """Reformat noodle attributes to modernGL attribute format"""
+
+    info = {
+        "name": f"in_{attr['semantic'].lower()}",
+        "components": FORMAT_MAP[attr['format']].num_components
+        #"type": ?
+    }
+    return info
+
+def construct_format_str(attributes: dict):
+    """Helper to construct format string from Noodle Attribute dict
+    
+    Looking for str like "3f 3f" for interleaved positions and normals
+    """
+
+    formats = []
+    for attr in attributes:
+        format_info = FORMAT_MAP[attr["format"]]
+        formats.append(f"{format_info.num_components}{format_info.format}")
+    return " ".join(formats)
+
 class EntityDelegate(Delegate):
 
     def __init__(self, client: Client, message: Message, specifier: str):
@@ -397,14 +441,29 @@ class EntityDelegate(Delegate):
 
         noodle_material = self.client.state["materials"][patch.material].info
         material = mglw.scene.Material()
-        attributes = patch.attributes
-        
+        scene.materials.append(material)
+
+        noodle_attributes = patch.attributes
+        new_attributes = {attr.semantic: reformat_attr(attr) for attr in noodle_attributes}
+
         view = self.client.state["bufferviews"][patch.attributes[0]["view"]].info
         buffer = self.client.state["buffers"][view.source_buffer].info
-        vbo = window.ctx.buffer(buffer.inline_bytes)
-        vao = window.ctx.simple_vertex_array(window.prog, vbo, 'vert')
-        
-        mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material, attributes=attributes)
+        index_offset = patch.indicies["offset"] 
+        #vbo = window.ctx.buffer(buffer.inline_bytes)
+        # vao = window.ctx.simple_vertex_array(window.prog, vbo, 'vert')
+        buffer_format = construct_format_str(noodle_attributes)
+        vao = mglw.opengl.vao.VAO(name=f"{self.name} VAO", mode=moderngl.TRIANGLES)
+        vao.buffer(buffer.inline_bytes[:index_offset], buffer_format, [info["name"] for attr, info in new_attributes.items()])
+        index_bytes, index_size = buffer.inline_bytes[index_offset:], FORMAT_MAP[patch.indicies["format"]].size
+        vao.index_buffer(index_bytes, index_size)
+        if instances:
+            # vao.instance()
+            print("Instances")
+
+        mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material, attributes=new_attributes)
+        # mesh.mesh_program = mglw.scene.MeshProgram()
+        mesh.mesh_program = mglw.scene.programs.ColorLightProgram()
+        scene.meshes.append(mesh)
         
         # Add mesh as new node to scene graph
         root = scene.find_node("Root")
