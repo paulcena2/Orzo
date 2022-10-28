@@ -254,7 +254,8 @@ class Window(mglw.WindowConfig):
         self.model_scene = self.load_scene("crate.obj")
         self.scene = mglw.scene.Scene("Noodles Scene")
         root = mglw.scene.Node("Root")
-        self.scene.nodes.append(root)
+        # self.scene.nodes.append(root)
+        root.matrix_global = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
         self.scene.root_nodes.append(root)
 
     def key_event(self, key, action, modifiers):

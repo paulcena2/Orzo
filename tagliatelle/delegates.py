@@ -458,16 +458,22 @@ class EntityDelegate(Delegate):
         vao.index_buffer(index_bytes, index_size)
         if instances:
             # vao.instance()
+            #window.ctx.buffer()
             print("Instances")
+            
 
         mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material, attributes=new_attributes)
         # mesh.mesh_program = mglw.scene.MeshProgram()
-        mesh.mesh_program = mglw.scene.programs.ColorLightProgram()
+        # mesh.mesh_program = mglw.scene.programs.VertexColorProgram()
+        mesh.mesh_program = mglw.scene.programs.FallbackProgram()
         scene.meshes.append(mesh)
         
         # Add mesh as new node to scene graph
-        root = scene.find_node("Root")
-        root.add_child(mglw.scene.Node(self.name, mesh=mesh))
+        new_mesh_node = mglw.scene.Node(self.name, mesh=mesh)
+        root = scene.root_nodes[0]
+        new_mesh_node.matrix_global = root.matrix_global
+        root.add_child(new_mesh_node)
+        window.scene.nodes.append(new_mesh_node)
     
     def on_new(self, message: Message):
         if hasattr(self.info, "render_rep"):
