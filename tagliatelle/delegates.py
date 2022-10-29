@@ -7,6 +7,8 @@ if TYPE_CHECKING:
     from penne.messages import Message
     from penne.core import Client
 
+from . import programs
+
 from penne import Delegate, inject_methods, inject_signals
 import moderngl_window as mglw
 import moderngl
@@ -404,9 +406,10 @@ FORMAT_MAP = {
 
 def reformat_attr(attr: dict):
     """Reformat noodle attributes to modernGL attribute format"""
+    num = "0" if attr['semantic'] in ("COLOR", "TEXTURE") else "" # too fragile? conform to mglw program naming convention, work for textures?
 
     info = {
-        "name": f"in_{attr['semantic'].lower()}",
+        "name": f"in_{attr['semantic'].lower()}{num}",
         "components": FORMAT_MAP[attr['format']].num_components
         #"type": ?
     }
@@ -423,6 +426,7 @@ def construct_format_str(attributes: dict):
         format_info = FORMAT_MAP[attr["format"]]
         formats.append(f"{format_info.num_components}{format_info.format}")
     return " ".join(formats)
+
 
 class EntityDelegate(Delegate):
 
@@ -459,13 +463,13 @@ class EntityDelegate(Delegate):
         if instances:
             # vao.instance()
             #window.ctx.buffer()
-            print("Instances")
+            print("Need Instance Rendering...")
             
 
         mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material, attributes=new_attributes)
         # mesh.mesh_program = mglw.scene.MeshProgram()
         # mesh.mesh_program = mglw.scene.programs.VertexColorProgram()
-        mesh.mesh_program = mglw.scene.programs.FallbackProgram()
+        mesh.mesh_program = programs.get_program(mesh)
         scene.meshes.append(mesh)
         
         # Add mesh as new node to scene graph
