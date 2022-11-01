@@ -12,6 +12,7 @@ from . import programs
 from penne import Delegate, inject_methods, inject_signals
 import moderngl_window as mglw
 import moderngl
+import numpy as np
 
 
 class MethodDelegate(Delegate):
@@ -427,6 +428,20 @@ def construct_format_str(attributes: dict):
         formats.append(f"{format_info.num_components}{format_info.format}")
     return " ".join(formats)
 
+def as_matrix(values: list):
+    """Helper to break long list into matrix like list of lists"""
+
+    instance_list = []
+    matrix = []
+    num_values = len(values)
+    for i in range(int(num_values/4) - 1):
+        matrix.append(values[4*i:(4*i)+4])
+        if i > 0 and (i+1) % 4 == 0:
+            instance_list.append(matrix)
+            matrix = []
+
+    return matrix
+
 
 class EntityDelegate(Delegate):
 
@@ -443,39 +458,53 @@ class EntityDelegate(Delegate):
         instances = render_rep.instances if hasattr(render_rep, "instances") else None
         patch = geometry.patches[0] # Fragile?
 
+        # Get Material - TODO: convert from noodles to mglw
         noodle_material = self.client.state["materials"][patch.material].info
         material = mglw.scene.Material()
         scene.materials.append(material)
 
+        # Reformat attributes
         noodle_attributes = patch.attributes
         new_attributes = {attr.semantic: reformat_attr(attr) for attr in noodle_attributes}
 
+        # Construct vertex array object from buffer and buffer view
         view = self.client.state["bufferviews"][patch.attributes[0]["view"]].info
         buffer = self.client.state["buffers"][view.source_buffer].info
         index_offset = patch.indicies["offset"] 
-        #vbo = window.ctx.buffer(buffer.inline_bytes)
-        # vao = window.ctx.simple_vertex_array(window.prog, vbo, 'vert')
         buffer_format = construct_format_str(noodle_attributes)
-        vao = mglw.opengl.vao.VAO(name=f"{self.name} VAO", mode=moderngl.TRIANGLES)
+        vao = mglw.opengl.vao.VAO(name=f"{self.name} VAO", mode=moderngl.TRIANGLES) # Fragile working only with triangles rn
         vao.buffer(buffer.inline_bytes[:index_offset], buffer_format, [info["name"] for attr, info in new_attributes.items()])
         index_bytes, index_size = buffer.inline_bytes[index_offset:], FORMAT_MAP[patch.indicies["format"]].size
         vao.index_buffer(index_bytes, index_size)
-        if instances:
-            # vao.instance()
-            #window.ctx.buffer()
-            print("Need Instance Rendering...")
-            
-
+    
+        # Create Mesh and add rendering program
         mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material, attributes=new_attributes)
-        # mesh.mesh_program = mglw.scene.MeshProgram()
-        # mesh.mesh_program = mglw.scene.programs.VertexColorProgram()
-        mesh.mesh_program = programs.get_program(mesh)
+        
+        # Add instances to vao if applicable
+        if instances:
+            instance_view = self.client.state["bufferviews"][instances["view"]].info
+            instance_buffer = self.client.state["buffers"][instance_view.source_buffer].info
+            instance_bytes = instance_buffer["inline_bytes"]
+            
+            instances = as_matrix(np.frombuffer(instance_bytes, np.single).tolist())
+
+            # Construct programs from instances and get vao instance from program
+            for instance in instances:
+                program = programs.construct_program(instance)
+                vao.instance(program)
+
+            # mesh.mesh_program = programs.InstanceProgram(window.ctx, instance_bytes)
+            mesh.mesh_program = programs.get_program(mesh)
+            print("Need Instance Rendering...")
+
+        else:
+            mesh.mesh_program = programs.get_program(mesh)
         scene.meshes.append(mesh)
         
         # Add mesh as new node to scene graph
         new_mesh_node = mglw.scene.Node(self.name, mesh=mesh)
         root = scene.root_nodes[0]
-        new_mesh_node.matrix_global = root.matrix_global
+        new_mesh_node.matrix_global = root.matrix_global # Is this how matrices should work here?
         root.add_child(new_mesh_node)
         window.scene.nodes.append(new_mesh_node)
     

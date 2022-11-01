@@ -2,6 +2,7 @@ from moderngl_window.scene import MeshProgram
 from moderngl_window.resources import programs
 from moderngl_window.meta import ProgramDescription
 import moderngl_window.scene.programs as mglw_progs
+import moderngl_window as mglw
 
 # Rough Draft Currently Unused
 class FlexMeshProgram(MeshProgram):
@@ -95,8 +96,72 @@ def get_program(mesh):
         # Texture Light Color Program
         elif has_normals and has_textures and mesh.material.mat_texture is not None:
             return mglw_progs.TextureLightColorProgram()
+
+        # Fallback Program
+        else:
+            return mglw_progs.FallbackProgram()
         
     else:
         # Fallback Program
         return mglw_progs.FallbackProgram()
+
+
+class InstanceProgram(MeshProgram):
+    """
+    Default Program, for now assume we are getting just vertices
+    """
+
+    def __init__(self, ctx, instance_buffer, **kwargs):
+        super().__init__(program=None)
+        self.instance_buffer = instance_buffer
+        self.program = ctx.program(
+            vertex_shader='''
+                #version 330
+                in vec2 in_vert;
+                in vec2 in_pos;
+                in float in_scale;
+                in vec3 in_color;
+                out vec3 v_color;
+                void main() {
+                    gl_Position = vec4(in_pos + (in_vert * in_scale), 0.0, 1.0);
+                    v_color = in_color;
+                }
+            ''',
+            fragment_shader='''
+                #version 330
+                in vec3 v_color;
+                out vec4 f_color;
+                void main() {
+                    f_color = vec4(v_color, 1.0);
+                }
+            ''',
+        )
+
+    def draw(
+        self,
+        mesh,
+        projection_matrix=None,
+        model_matrix=None,
+        camera_matrix=None,
+        time=0,
+    ):
+
+        self.program["m_proj"].write(projection_matrix)
+        self.program["m_model"].write(model_matrix)
+        self.program["m_cam"].write(camera_matrix)
+
+        if mesh.material:
+            self.program["color"].value = tuple(mesh.material.color[0:3])
+        else:
+            self.program["color"].value = (1.0, 1.0, 1.0)
+
+        mesh.vao.render(self.program, instances=len())
+    
+    def apply(self, mesh):
+        return self
+
+
+def construct_program(instance: list[list[float]]):
+    # TODO
+    return None
 
