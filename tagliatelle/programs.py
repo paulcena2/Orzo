@@ -161,7 +161,50 @@ class InstanceProgram(MeshProgram):
         return self
 
 
-def construct_program(instance: list[list[float]]):
-    # TODO
-    return None
+def construct_program(context, instance: list[list[float]], attributes: dict):
+    
+    has_normal = "NORMAL" in attributes
+    has_tangent = "TANGENT" in attributes
+    has_texture = "TEXTURE" in attributes
+    has_color = "COLOR" in attributes
 
+    vert_shader = f'''
+        #version 330
+        in vec3 in_position;
+        {"in vec3 in_normal;" if has_normal else ""}
+        {"in vec3 in_tangent;" if has_tangent else ""}
+        {"in vec3 in_texture;" if has_texture else ""}
+        {"in vec4 in_color;" if has_color else ""}
+
+        {"out vec3 v_normal;" if has_normal else ""}
+        {"out vec3 v_tangent;" if has_tangent else ""}
+        {"out vec3 v_texture;" if has_texture else ""}
+        out vec4 v_color
+        
+        void main() {{
+            gl_Position = vec4{instance[0][0], instance[0][1], instance[0][2], 1.0} * vec4{instance[3][0], instance[3][1], instance[3][2], 1.0};
+
+            {"v_normal = in_normal;" if has_normal else ""}
+            {"v_tangent = in_tangent;" if has_tangent else ""}
+            {"v_texture = in_texture;" if has_texture else ""}
+            {f"v_color = in_color * vec4{instance[1][0], instance[1][1], instance[1][2], instance[1][3]};" if has_color else f"v_color = vec4{instance[1][0], instance[1][1], instance[1][2], instance[1][3]};"}
+        }}
+    '''
+    frag_shader = f'''
+        #version 330
+        in vec3 v_position;
+        in vec4 v_color;
+        {"in vec3 v_normal;" if has_normal else ""}
+        {"in vec3 v_tangent;" if has_tangent else ""}
+        {"in vec3 v_texture;" if has_texture else ""}
+        
+        out vec4 f_color;
+
+        void main() {{
+            {"float lum = clamp(dot(normalize(Light - v_position), normalize(v_normal)), 0.0, 1.0) * 0.8 + 0.2;" if has_normal else "1"}
+            {"f_color = vec4(texture(Texture, v_text).rgb * lum, 1.0);" if has_texture else ""}
+            f_color = v_color;
+        }}
+    '''
+     
+    return context.program(vertex_shader=vert_shader,fragment_shader=frag_shader,)

@@ -440,7 +440,7 @@ def as_matrix(values: list):
             instance_list.append(matrix)
             matrix = []
 
-    return matrix
+    return instance_list
 
 
 class EntityDelegate(Delegate):
@@ -490,8 +490,9 @@ class EntityDelegate(Delegate):
 
             # Construct programs from instances and get vao instance from program
             for instance in instances:
-                program = programs.construct_program(instance)
-                vao.instance(program)
+                # program = programs.construct_program(window.ctx, instance, new_attributes)
+                # vao.instance(program)
+                pass
 
             # mesh.mesh_program = programs.InstanceProgram(window.ctx, instance_bytes)
             mesh.mesh_program = programs.get_program(mesh)
