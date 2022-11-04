@@ -407,10 +407,9 @@ FORMAT_MAP = {
 
 def reformat_attr(attr: dict):
     """Reformat noodle attributes to modernGL attribute format"""
-    num = "0" if attr['semantic'] in ("COLOR", "TEXTURE") else "" # too fragile? conform to mglw program naming convention, work for textures?
 
     info = {
-        "name": f"in_{attr['semantic'].lower()}{num}",
+        "name": f"in_{attr['semantic'].lower()}",
         "components": FORMAT_MAP[attr['format']].num_components
         #"type": ?
     }
@@ -427,20 +426,6 @@ def construct_format_str(attributes: dict):
         format_info = FORMAT_MAP[attr["format"]]
         formats.append(f"{format_info.num_components}{format_info.format}")
     return " ".join(formats)
-
-def as_matrix(values: list):
-    """Helper to break long list into matrix like list of lists"""
-
-    instance_list = []
-    matrix = []
-    num_values = len(values)
-    for i in range(int(num_values/4) - 1):
-        matrix.append(values[4*i:(4*i)+4])
-        if i > 0 and (i+1) % 4 == 0:
-            instance_list.append(matrix)
-            matrix = []
-
-    return instance_list
 
 
 class EntityDelegate(Delegate):
@@ -485,21 +470,15 @@ class EntityDelegate(Delegate):
             instance_view = self.client.state["bufferviews"][instances["view"]].info
             instance_buffer = self.client.state["buffers"][instance_view.source_buffer].info
             instance_bytes = instance_buffer["inline_bytes"]
-            
-            instances = as_matrix(np.frombuffer(instance_bytes, np.single).tolist())
+            num_instances = int(instance_buffer.size / 64) # 16 4 byte floats per instance
 
-            # Construct programs from instances and get vao instance from program
-            for instance in instances:
-                # program = programs.construct_program(window.ctx, instance, new_attributes)
-                # vao.instance(program)
-                pass
+            vao.buffer(instance_bytes, '16f/i', 'instance_matrix')
 
-            # mesh.mesh_program = programs.InstanceProgram(window.ctx, instance_bytes)
-            mesh.mesh_program = programs.get_program(mesh)
-            print("Need Instance Rendering...")
+            mesh.mesh_program = programs.InstanceProgram(window.ctx, num_instances)
+            print(f"Instance rendering: \n{np.frombuffer(instance_bytes, np.single).tolist()}")
 
         else:
-            mesh.mesh_program = programs.get_program(mesh)
+            mesh.mesh_program = programs.BaseProgram(window.ctx)
         scene.meshes.append(mesh)
         
         # Add mesh as new node to scene graph
