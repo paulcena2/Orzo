@@ -405,6 +405,15 @@ FORMAT_MAP = {
     "VEC4": FormatInfo(4, 'f', 4)
 }
 
+MODE_MAP = {
+    "TRIANGLES" : moderngl.TRIANGLES,
+    "POINTS" : moderngl.POINTS,
+    "LINES" : moderngl.LINES,
+    "LINE_LOOP" : moderngl.LINE_LOOP,
+    "LINE_STRIP" : moderngl.LINE_STRIP,
+    "TRIANGLE_STRIP" : moderngl.TRIANGLE_STRIP
+}
+
 def reformat_attr(attr: dict):
     """Reformat noodle attributes to modernGL attribute format"""
 
@@ -457,7 +466,7 @@ class EntityDelegate(Delegate):
         buffer = self.client.state["buffers"][view.source_buffer].info
         index_offset = patch.indicies["offset"] 
         buffer_format = construct_format_str(noodle_attributes)
-        vao = mglw.opengl.vao.VAO(name=f"{self.name} VAO", mode=moderngl.TRIANGLES) # Fragile working only with triangles rn
+        vao = mglw.opengl.vao.VAO(name=f"{self.name} VAO", mode=MODE_MAP[patch['type']])
         vao.buffer(buffer.inline_bytes[:index_offset], buffer_format, [info["name"] for attr, info in new_attributes.items()])
         index_bytes, index_size = buffer.inline_bytes[index_offset:], FORMAT_MAP[patch.indicies["format"]].size
         vao.index_buffer(index_bytes, index_size)

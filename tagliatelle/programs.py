@@ -132,8 +132,16 @@ class InstanceProgram(MeshProgram):
 
                 void main() {
     
+
+                    vec4 q = instance_matrix[2]; 
+                    vec3 col1 = vec3(2 * (q[0]*q[0] + q[1]*q[1])-1, 2 * (q[1]*q[2] + q[0]*q[3]), 2 * (q[1]*q[3] - q[0]*q[2]));
+                    vec3 col2 = vec3(2 * (q[1]*q[2] - q[0]*q[3]), 2 * (q[0]*q[0] + q[2]*q[2]) - 1, 2 * (q[2]*q[3] + q[0]*q[1]));
+                    vec3 col3 = vec3(2 * (q[1]*q[3] + q[0]*q[2]), 2 * (q[2]*q[3] - q[0]*q[1]), 2 * (q[0]*q[0] + q[3]*q[3]) - 1);
+                    mat3 rotation_matrix = mat3(col1, col2, col3);
+
                     mat4 mv = m_cam * m_model;
-                    vec4 position = mv * vec4((in_position + vec3(instance_matrix[0])) * vec3(instance_matrix[3]), 1.0);
+                    //vec4 position = mv * vec4(rotation_matrix * (in_position + 20 * vec3(instance_matrix[0])) * vec3(instance_matrix[3]), 1.0);
+                    vec4 position = mv * vec4((in_position + 50 * vec3(instance_matrix[0])) * vec3(instance_matrix[3]), 1.0);
 
                     gl_Position = m_proj * position;
 
