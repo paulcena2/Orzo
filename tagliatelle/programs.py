@@ -141,7 +141,7 @@ class InstanceProgram(MeshProgram):
 
                     mat4 mv = m_cam * m_model;
                     //vec4 position = mv * vec4(rotation_matrix * (in_position + 20 * vec3(instance_matrix[0])) * vec3(instance_matrix[3]), 1.0);
-                    vec4 position = mv * vec4((in_position + 50 * vec3(instance_matrix[0])) * vec3(instance_matrix[3]), 1.0);
+                    vec4 position = mv * vec4((in_position * vec3(instance_matrix[3])) +  vec3(instance_matrix[0]), 1.0);
 
                     gl_Position = m_proj * position;
 
