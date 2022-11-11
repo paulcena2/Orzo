@@ -470,6 +470,22 @@ class EntityDelegate(Delegate):
         vao.buffer(buffer.inline_bytes[:index_offset], buffer_format, [info["name"] for attr, info in new_attributes.items()])
         index_bytes, index_size = buffer.inline_bytes[index_offset:], FORMAT_MAP[patch.indicies["format"]].size
         vao.index_buffer(index_bytes, index_size)
+
+        # Add default attributes for those that are missing
+        if "COLOR" not in new_attributes:
+            default_colors = [1.0, 1.0, 1.0, 1.0] * patch['vertex_count']
+            buffer_data = np.array(default_colors, np.single)
+            vao.buffer(buffer_data, '4f', 'in_color')
+
+        if "NORMAL" not in new_attributes:
+            default_normal = [0.0, 0.0, 0.0] * patch['vertex_count']
+            buffer_data = np.array(default_normal, np.single)
+            vao.buffer(buffer_data, '3f', 'in_normal')
+
+        if "TEXTURE" not in new_attributes:
+            default_texture_coords = [0.0, 0.0] * patch['vertex_count']
+            buffer_data = np.array(default_texture_coords, np.single)
+            vao.buffer(buffer_data, '2f', 'in_color')
     
         # Create Mesh and add rendering program
         mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material, attributes=new_attributes)

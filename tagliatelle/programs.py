@@ -131,26 +131,23 @@ class InstanceProgram(MeshProgram):
                 out vec3 v_position;
 
                 void main() {
-    
 
-                    vec4 q = instance_matrix[2]; 
+                    // Get rotation matrix from quaternion 
+                    vec4 q = instance_matrix[2];
                     vec3 col1 = vec3(2 * (q[0]*q[0] + q[1]*q[1])-1, 2 * (q[1]*q[2] + q[0]*q[3]), 2 * (q[1]*q[3] - q[0]*q[2]));
                     vec3 col2 = vec3(2 * (q[1]*q[2] - q[0]*q[3]), 2 * (q[0]*q[0] + q[2]*q[2]) - 1, 2 * (q[2]*q[3] + q[0]*q[1]));
                     vec3 col3 = vec3(2 * (q[1]*q[3] + q[0]*q[2]), 2 * (q[2]*q[3] - q[0]*q[1]), 2 * (q[0]*q[0] + q[3]*q[3]) - 1);
                     mat3 rotation_matrix = mat3(col1, col2, col3);
 
                     mat4 mv = m_cam * m_model;
-                    //vec4 position = mv * vec4(rotation_matrix * (in_position + 20 * vec3(instance_matrix[0])) * vec3(instance_matrix[3]), 1.0);
-                    vec4 position = mv * vec4((in_position * vec3(instance_matrix[3])) +  vec3(instance_matrix[0]), 1.0);
+                    vec4 position = mv * vec4((rotation_matrix * in_position * vec3(instance_matrix[3])) +  vec3(instance_matrix[0]), 1.0);
 
                     gl_Position = m_proj * position;
 
                     mat3 normal_matrix = transpose(inverse(mat3(mv)));
-
                     v_normal = normal_matrix * in_normal;
                     v_position = position.xyz;
-                    v_color = instance_matrix[1];
-                    //v_color = vec4(1.0,1.0,1.0,1.0);
+                    v_color = in_color * instance_matrix[1];
                 }
             ''',
             fragment_shader='''
