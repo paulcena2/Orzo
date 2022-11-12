@@ -3,6 +3,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
+from urllib.parse import _NetlocResultMixinStr
 if TYPE_CHECKING:
     from penne.messages import Message
     from penne.core import Client
@@ -13,6 +14,35 @@ from penne import Delegate, inject_methods, inject_signals
 import moderngl_window as mglw
 import moderngl
 import numpy as np
+
+
+@dataclass
+class FormatInfo:
+    num_components: int
+    format: str
+    size: int # in bytes
+
+
+FORMAT_MAP = {
+    # (num components, format per component, size per component)
+    "U8": FormatInfo(1, 'u1', 1),
+    "U16": FormatInfo(1, 'u2', 2),
+    "U32": FormatInfo(1, 'u4', 4),
+    "U16VEC2": FormatInfo(2, 'u2', 2),
+    "U8VEC4": FormatInfo(4, 'u1', 1),
+    "VEC2": FormatInfo(2, 'f', 4),
+    "VEC3": FormatInfo(3, 'f', 4),
+    "VEC4": FormatInfo(4, 'f', 4)
+}
+
+MODE_MAP = {
+    "TRIANGLES" : moderngl.TRIANGLES,
+    "POINTS" : moderngl.POINTS,
+    "LINES" : moderngl.LINES,
+    "LINE_LOOP" : moderngl.LINE_LOOP,
+    "LINE_STRIP" : moderngl.LINE_STRIP,
+    "TRIANGLE_STRIP" : moderngl.TRIANGLE_STRIP
+}
 
 
 class MethodDelegate(Delegate):
@@ -384,57 +414,6 @@ class TableDelegate(Delegate):
 
 class DocumentDelegate(Delegate):
     pass
-    
-
-@dataclass
-class FormatInfo:
-    num_components: int
-    format: str
-    size: int # in bytes
-
-
-FORMAT_MAP = {
-    # (num components, format per component, size per component)
-    "U8": FormatInfo(1, 'u1', 1),
-    "U16": FormatInfo(1, 'u2', 2),
-    "U32": FormatInfo(1, 'u4', 4),
-    "U16VEC2": FormatInfo(2, 'u2', 2),
-    "U8VEC4": FormatInfo(4, 'u1', 1),
-    "VEC2": FormatInfo(2, 'f', 4),
-    "VEC3": FormatInfo(3, 'f', 4),
-    "VEC4": FormatInfo(4, 'f', 4)
-}
-
-MODE_MAP = {
-    "TRIANGLES" : moderngl.TRIANGLES,
-    "POINTS" : moderngl.POINTS,
-    "LINES" : moderngl.LINES,
-    "LINE_LOOP" : moderngl.LINE_LOOP,
-    "LINE_STRIP" : moderngl.LINE_STRIP,
-    "TRIANGLE_STRIP" : moderngl.TRIANGLE_STRIP
-}
-
-def reformat_attr(attr: dict):
-    """Reformat noodle attributes to modernGL attribute format"""
-
-    info = {
-        "name": f"in_{attr['semantic'].lower()}",
-        "components": FORMAT_MAP[attr['format']].num_components
-        #"type": ?
-    }
-    return info
-
-def construct_format_str(attributes: dict):
-    """Helper to construct format string from Noodle Attribute dict
-    
-    Looking for str like "3f 3f" for interleaved positions and normals
-    """
-
-    formats = []
-    for attr in attributes:
-        format_info = FORMAT_MAP[attr["format"]]
-        formats.append(f"{format_info.num_components}{format_info.format}")
-    return " ".join(formats)
 
 
 class EntityDelegate(Delegate):
@@ -446,29 +425,80 @@ class EntityDelegate(Delegate):
     def render_entity(self, window):
         
         # Prepare Mesh
-        scene = window.scene
         render_rep = self.info.render_rep
-        geometry = self.client.state["geometries"][render_rep.mesh].info
+        geometry = self.client.state["geometries"][render_rep.mesh]
+        patches = geometry.patches
         instances = render_rep.instances if hasattr(render_rep, "instances") else None
-        patch = geometry.patches[0] # Fragile?
+        
+        # Render Each Patch Using Geometry Delegate
+        for patch in patches:
+            geometry.render_patch(patch, instances, window)
+
+
+    def on_new(self, message: Message):
+        if hasattr(self.info, "render_rep"):
+            self.client.callback_queue.put((self.render_entity, []))
+
+    def on_remove(self, message: Message):
+        
+        self.client.callback_queue.put((self.remove_from_render, []))
+
+class PlotDelegate(Delegate):
+    pass
+
+class MaterialDelegate(Delegate):
+    
+    def on_new(self, message: Message):
+        self.name = "No-Name Material" if not hasattr(message, "name") else message.name
+        self.mglw_material = mglw.scene.Material(f"{self.name}'s Material")
+
+
+class GeometryDelegate(Delegate):
+
+    def reformat_attr(self, attr: dict):
+        """Reformat noodle attributes to modernGL attribute format"""
+
+        info = {
+            "name": f"in_{attr['semantic'].lower()}",
+            "components": FORMAT_MAP[attr['format']].num_components
+            #"type": ?
+        }
+        return info
+
+
+    def construct_format_str(self, attributes: dict):
+        """Helper to construct format string from Noodle Attribute dict
+        
+        Looking for str like "3f 3f" for interleaved positions and normals
+        """
+
+        formats = []
+        for attr in attributes:
+            format_info = FORMAT_MAP[attr["format"]]
+            formats.append(f"{format_info.num_components}{format_info.format}")
+        return " ".join(formats)
+
+
+    def render_patch(self, patch, instances, window):
+        
+        scene = window.scene
 
         # Get Material - TODO: convert from noodles to mglw
-        noodle_material = self.client.state["materials"][patch.material].info
-        material = mglw.scene.Material()
-        scene.materials.append(material)
+        material = self.client.state["materials"][patch.material]
+        scene.materials.append(material.mglw_material)
 
         # Reformat attributes
         noodle_attributes = patch.attributes
-        new_attributes = {attr.semantic: reformat_attr(attr) for attr in noodle_attributes}
+        new_attributes = {attr.semantic: self.reformat_attr(attr) for attr in noodle_attributes}
 
         # Construct vertex array object from buffer and buffer view
-        view = self.client.state["bufferviews"][patch.attributes[0]["view"]].info
-        buffer = self.client.state["buffers"][view.source_buffer].info
+        view = self.buffer_view
+        buffer = view.buffer
         index_offset = patch.indicies["offset"] 
-        buffer_format = construct_format_str(noodle_attributes)
-        vao = mglw.opengl.vao.VAO(name=f"{self.name} VAO", mode=MODE_MAP[patch['type']])
-        vao.buffer(buffer.inline_bytes[:index_offset], buffer_format, [info["name"] for attr, info in new_attributes.items()])
-        index_bytes, index_size = buffer.inline_bytes[index_offset:], FORMAT_MAP[patch.indicies["format"]].size
+        buffer_format = self.construct_format_str(noodle_attributes)
+        vao = mglw.opengl.vao.VAO(name=f"{self.name} Patch VAO", mode=MODE_MAP[patch['type']])
+        vao.buffer(buffer.bytes[:index_offset], buffer_format, [info["name"] for info in new_attributes.values()])
+        index_bytes, index_size = buffer.bytes[index_offset:], FORMAT_MAP[patch.indicies["format"]].size
         vao.index_buffer(index_bytes, index_size)
 
         # Add default attributes for those that are missing
@@ -492,9 +522,9 @@ class EntityDelegate(Delegate):
         
         # Add instances to vao if applicable
         if instances:
-            instance_view = self.client.state["bufferviews"][instances["view"]].info
-            instance_buffer = self.client.state["buffers"][instance_view.source_buffer].info
-            instance_bytes = instance_buffer["inline_bytes"]
+            instance_view = self.client.state["bufferviews"][instances.view]
+            instance_buffer = instance_view.buffer
+            instance_bytes = instance_buffer.bytes
             num_instances = int(instance_buffer.size / 64) # 16 4 byte floats per instance
 
             vao.buffer(instance_bytes, '16f/i', 'instance_matrix')
@@ -512,19 +542,30 @@ class EntityDelegate(Delegate):
         new_mesh_node.matrix_global = root.matrix_global # Is this how matrices should work here?
         root.add_child(new_mesh_node)
         window.scene.nodes.append(new_mesh_node)
+        self.nodes.append(new_mesh_node)
+
+
+    def remove_from_render(self, window):
+        # Need to test, enough to remove from render?
+        window.scene.root_nodes[0].children.remove(self.node)
+        window.scene.nodes.remove(self.node)
+
     
     def on_new(self, message: Message):
-        if hasattr(self.info, "render_rep"):
-            self.client.callback_queue.put((self.render_entity, []))
 
-class PlotDelegate(Delegate):
-    pass
+        self.name = "No-Name Geometry" if not hasattr(message, "name") else message.name
+        self.patches = message.patches
+        self.first_patch_attrs = self.patches[0].attributes
+        self.nodes = []
 
-class MaterialDelegate(Delegate):
-    pass
+        # assuming all attrs use same view
+        view_id = self.first_patch_attrs[0]["view"] 
+        self.buffer_view = self.client.state["bufferviews"][view_id]
 
-class GeometryDelegate(Delegate):
-    pass
+
+    def on_remove(self, message: Message):
+        self.client.callback_queue.put((self.remove_from_render, []))
+
 
 class LightDelegate(Delegate):
     pass
@@ -538,8 +579,19 @@ class TextureDelegate(Delegate):
 class SamplerDelegate(Delegate):
     pass
 
-class BufferDelegate(Delegate):
-    pass
+class BufferDelegate(Delegate):  
+
+    def on_new(self, message: Message):
+        self.size = message.size
+
+        if hasattr(message, "inline_bytes"):
+            self.bytes = message.inline_bytes
+        else:
+            print("URI Bytes Not Implemented Yet")
+            self.bytes = b'Uh oh'
 
 class BufferViewDelegate(Delegate):
-    pass
+    
+    def on_new(self, message: Message):
+        self.buffer: BufferDelegate = self.client.state["buffers"][message.source_buffer]
+
