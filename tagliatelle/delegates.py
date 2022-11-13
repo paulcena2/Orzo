@@ -449,8 +449,36 @@ class PlotDelegate(Delegate):
 class MaterialDelegate(Delegate):
     
     def on_new(self, message: Message):
+        """"
+        MsgMaterialCreate = {
+            id : MaterialID,
+            ? name : tstr,
+
+            ? pbr_info : PBRInfo, ; if missing, defaults
+            ? normal_texture : TextureRef,
+            
+            ? occlusion_texture : TextureRef, ; assumed to be linear, ONLY R used
+            ? occlusion_texture_factor : float, ; assume 1 by default
+
+            ? emissive_texture : TextureRef, ; assumed to be SRGB. ignore A.
+            ? emissive_factor  : Vec3, ; all 1 by default
+
+            ? use_alpha    : bool,  ; false by default
+            ? alpha_cutoff : float, ; .5 by default
+
+            ? double_sided : bool, ; false by default
+        }
+        """
         self.name = "No-Name Material" if not hasattr(message, "name") else message.name
-        self.mglw_material = mglw.scene.Material(f"{self.name}'s Material")
+
+        material = mglw.scene.Material(f"{self.name}'s Material")
+        material.color = message.pbr_info.base_color
+        if hasattr(message, "normal_texture"):
+            texture = self.client.get_component("textures", message.normal_texture.texture)
+            material.mat_texture = mglw.scene.MaterialTexture(texture.mglw_texture, texture.mglw_sampler)
+    
+        material.double_sided = False if not hasattr(message, "double_sided") else message.double_sided
+        self.mglw_material = material
 
 
 class GeometryDelegate(Delegate):
@@ -571,13 +599,46 @@ class LightDelegate(Delegate):
     pass
 
 class ImageDelegate(Delegate):
-    pass
+    
+    def on_new(self, message: Message):
+        self.size = (0, 0)
+        self.components = 1
+        if hasattr(message, "buffer_source"):
+            buffer = self.client.get_component("bufferviews", message.buffer_source).buffer
+            self.bytes = buffer.bytes
+        else:
+            print("URI source not implemented for images")
+            self.bytes = b'Uh Oh'
+
 
 class TextureDelegate(Delegate):
-    pass
+
+    def set_up_texture(self, window):
+        image = self.client.get_component("images", self.info.image)
+        self.mglw_texture = window.ctx.texture(image.size, image.components, image.bytes) # Need size (width, height), components, data - bytes,
+
+    def set_up_sampler(self, window):
+        if hasattr(self.info, "sampler"):
+            sampler = self.client.get_component("samplers", self.info.sampler)
+            self.mglw_sampler = sampler.mglw_sampler
+        else:
+            self.mglw_sampler = window.ctx.sampler(texture=self.mglw_texture)
+    
+    def on_new(self, message: Message):
+        self.mglw_texture = None        
+        self.client.callback_queue.put((self.set_up_texture, []))
+        self.client.callback_queue.put((self.set_up_sampler, []))
+        
 
 class SamplerDelegate(Delegate):
-    pass
+
+    def set_up_sampler(self, window):
+        self.mglw_sampler = window.ctx.sampler()
+    
+    def on_new(self, message: Message):
+        self.mglw_sampler = None
+        self.client.callback_queue.put((self.set_up_sampler, []))
+
 
 class BufferDelegate(Delegate):  
 
@@ -589,6 +650,7 @@ class BufferDelegate(Delegate):
         else:
             print("URI Bytes Not Implemented Yet")
             self.bytes = b'Uh oh'
+
 
 class BufferViewDelegate(Delegate):
     
