@@ -512,7 +512,7 @@ class GeometryDelegate(Delegate):
         scene = window.scene
 
         # Get Material - TODO: convert from noodles to mglw
-        material = self.client.state["materials"][patch.material]
+        material = self.client.get_component("materials", patch.material)
         scene.materials.append(material.mglw_material)
 
         # Reformat attributes
@@ -546,7 +546,7 @@ class GeometryDelegate(Delegate):
             vao.buffer(buffer_data, '2f', 'in_color')
     
         # Create Mesh and add rendering program
-        mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material, attributes=new_attributes)
+        mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material.mglw_material, attributes=new_attributes)
         
         # Add instances to vao if applicable
         if instances:
@@ -557,6 +557,7 @@ class GeometryDelegate(Delegate):
 
             vao.buffer(instance_bytes, '16f/i', 'instance_matrix')
 
+            # mesh.mesh_program = programs.InstanceProgram(window.ctx, num_instances)
             mesh.mesh_program = programs.InstanceProgram(window.ctx, num_instances)
             print(f"Instance rendering: \n{np.frombuffer(instance_bytes, np.single).tolist()}")
 
@@ -575,8 +576,9 @@ class GeometryDelegate(Delegate):
 
     def remove_from_render(self, window):
         # Need to test, enough to remove from render?
-        window.scene.root_nodes[0].children.remove(self.node)
-        window.scene.nodes.remove(self.node)
+        for node in self.nodes:
+            window.scene.root_nodes[0].children.remove(self.node)
+            window.scene.nodes.remove(self.node)
 
     
     def on_new(self, message: Message):
@@ -596,7 +598,12 @@ class GeometryDelegate(Delegate):
 
 
 class LightDelegate(Delegate):
-    pass
+    
+    def add_light(self, window):
+        window.lights.append(light)
+
+    def on_new(self, message: Message):
+        self.client.callback_queue.put((self.add_light, []))
 
 class ImageDelegate(Delegate):
     
@@ -632,8 +639,18 @@ class TextureDelegate(Delegate):
 
 class SamplerDelegate(Delegate):
 
+    FILTER_MAP = {
+        "NEAREST": moderngl.NEAREST,
+        "LINEAR": moderngl.LINEAR,
+        "LINEAR_MIPMAP_LINEAR": moderngl.LINEAR_MIPMAP_LINEAR 
+    }
+
     def set_up_sampler(self, window):
-        self.mglw_sampler = window.ctx.sampler()
+
+        # yet to include wrap_s, wrap_t, -> repeat_x repeat_y in moderngl?
+        min_filter = self.FILTER_MAP[self.info.min_filter] if hasattr(self.info, "min_filter") else moderngl.LINEAR_MIPMAP_LINEAR
+        mag_filter = self.FILTER_MAP[self.info.mag_filter] if hasattr(self.info, "mag_filter") else moderngl.LINEAR
+        self.mglw_sampler = window.ctx.sampler(filter=(min_filter, mag_filter))
     
     def on_new(self, message: Message):
         self.mglw_sampler = None
