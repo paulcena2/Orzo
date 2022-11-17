@@ -547,6 +547,8 @@ class GeometryDelegate(Delegate):
     
         # Create Mesh and add rendering program
         mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material.mglw_material, attributes=new_attributes)
+        mesh.lights = window.lights
+        mesh.num_lights = window.num_lights
         
         # Add instances to vao if applicable
         if instances:
@@ -558,7 +560,7 @@ class GeometryDelegate(Delegate):
             vao.buffer(instance_bytes, '16f/i', 'instance_matrix')
 
             # mesh.mesh_program = programs.InstanceProgram(window.ctx, num_instances)
-            mesh.mesh_program = programs.InstanceProgram(window.ctx, num_instances)
+            mesh.mesh_program = programs.PhongProgram(window.ctx, num_instances)
             print(f"Instance rendering: \n{np.frombuffer(instance_bytes, np.single).tolist()}")
 
         else:
@@ -598,11 +600,27 @@ class GeometryDelegate(Delegate):
 
 
 class LightDelegate(Delegate):
+
+    def get_light_type(message):
+        if hasattr(message, "point"): return 0
+        elif hasattr(message, "spot"): return 1
+        elif hasattr(message, "directional"): return 2
     
     def add_light(self, window):
-        window.lights.append(light)
+        window.lights.append(self.light_basics)
 
     def on_new(self, message: Message):
+        
+        light_type = self.get_light_type(message)
+        self.light_basics = {
+            "position": (0, 0, 0, 0),
+            "color": message.color if hasattr(message, "color") else (1.0, 1.0, 1.0),
+            "ambient": (.5, .5, .5),
+            "falloff": .5,
+            "radius": 10,
+            "type": light_type, 
+        }
+
         self.client.callback_queue.put((self.add_light, []))
 
 class ImageDelegate(Delegate):

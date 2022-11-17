@@ -205,22 +205,41 @@ class PhongProgram(MeshProgram):
             ''',
             fragment_shader='''
                 #version 330
-                #extension GL_OES_standard_derivatives : enable
+                //#extension GL_OES_standard_derivatives : enable
+
+                struct LightInfo {
+                    vec3 position;
+                    vec3 color;
+                    vec3 ambient;
+                    float falloff;
+                    float radius;
+                    int type;
+                };
                 
                 in vec3 v_position;
                 in vec3 v_normal;
                 in vec4 v_color;
                 in vec3 v_view_position;
 
+                uniform int num_lights;
+                uniform LightInfo lights[num_lights];
                 uniform vec4 material_color;
 
                 out vec4 f_color;
 
                 void main() {
 
-                    float specular = 
+                    int i = 0;
+                    while (i < num_lights){
+                        
+                        LightInfo light = lights[i];
 
-                    f_color = diffuse_color * (diffuse + light.ambient) + specular
+                        i += 1;
+                    }
+
+                    float specular = 1.0;
+
+                    //f_color = diffuse_color * (diffuse + light.ambient) + specular;
                 }
             ''',
         )
@@ -242,6 +261,11 @@ class PhongProgram(MeshProgram):
             self.program["material_color"].value = tuple(mesh.material.color)
         else:
             self.program["material_color"].value = (1.0, 1.0, 1.0, 1.0)
+
+        lights = mesh.lights
+        num_lights = len(lights)
+        self.program["num_lights"].write(num_lights)
+        self.program["lights"].write(lights)
 
         mesh.vao.render(self.program, instances = self.num_instances)
     
