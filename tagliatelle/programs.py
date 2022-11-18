@@ -208,11 +208,9 @@ class PhongProgram(MeshProgram):
                 //#extension GL_OES_standard_derivatives : enable
 
                 struct LightInfo {
-                    vec3 position;
-                    vec3 color;
+                    vec3 world_position;
+                    vec4 color;
                     vec3 ambient;
-                    float falloff;
-                    float radius;
                     int type;
                 };
                 
@@ -222,7 +220,7 @@ class PhongProgram(MeshProgram):
                 in vec3 v_view_position;
 
                 uniform int num_lights;
-                uniform LightInfo lights[num_lights];
+                uniform LightInfo lights[8];
                 uniform vec4 material_color;
 
                 out vec4 f_color;
@@ -239,6 +237,7 @@ class PhongProgram(MeshProgram):
 
                     float specular = 1.0;
 
+                    f_color = material_color;
                     //f_color = diffuse_color * (diffuse + light.ambient) + specular;
                 }
             ''',
@@ -264,8 +263,14 @@ class PhongProgram(MeshProgram):
 
         lights = mesh.lights
         num_lights = len(lights)
-        self.program["num_lights"].write(num_lights)
-        self.program["lights"].write(lights)
+        self.program["num_lights"].value = num_lights
+        #self.program["lights"].write(b'test')
+
+        # Set light values - better way to pass dict directly? getting value error cause key doesn't match program's dict
+        light_attrs = ["world_position", "color", "ambient", "type"]
+        for i, light in zip(range(num_lights), lights):
+            for j in range(4):
+                self.program[f"lights[{i}].{light_attrs[j]}"].value = light[j]
 
         mesh.vao.render(self.program, instances = self.num_instances)
     

@@ -22,7 +22,7 @@ class Window(mglw.WindowConfig):
         self.camera.zoom = 2.5
         self.wnd.mouse_exclusivity = True
         self.camera_enabled = True
-        self.lights = []
+        self.lights = set() # set of entities with lights
         self.num_lights = 0
 
         self.scene = mglw.scene.Scene("Noodles Scene")

@@ -434,17 +434,49 @@ class EntityDelegate(Delegate):
         for patch in patches:
             geometry.render_patch(patch, instances, window)
 
+    def attach_lights(self, window):
+
+        for light_id in self.info.lights:
+            light_info = self.client.get_component("lights", tuple(light_id)).light_basics
+            world_transform = self.get_world_transform()
+            world_position = np.matmul(world_transform, np.array([1.0, 1.0, 1.0, 1.0]))
+            full_light_info = (
+                tuple(world_position[:3]),
+                tuple(light_info["color"]),
+                light_info["ambient"],
+                light_info["type"]
+            )
+            window.lights.add(full_light_info)
+            window.num_lights += 1
+
+
+    def get_world_transform(self):
+
+        local_transform = np.array(self.info.transform).reshape(4, 4)
+
+        if not hasattr(self.info, "parent"):
+            return local_transform
+
+        else:
+            parent = self.client.get_component("entities", self.info.parent)
+            return np.matmul(parent.get_world_transform(), local_transform)
+
 
     def on_new(self, message: Message):
         if hasattr(self.info, "render_rep"):
             self.client.callback_queue.put((self.render_entity, []))
 
+        if hasattr(self.info, "lights"):
+            self.client.callback_queue.put((self.attach_lights, []))
+
     def on_remove(self, message: Message):
         
         self.client.callback_queue.put((self.remove_from_render, []))
 
+
 class PlotDelegate(Delegate):
     pass
+
 
 class MaterialDelegate(Delegate):
     
@@ -601,27 +633,20 @@ class GeometryDelegate(Delegate):
 
 class LightDelegate(Delegate):
 
-    def get_light_type(message):
+    def get_light_type(self, message):
         if hasattr(message, "point"): return 0
         elif hasattr(message, "spot"): return 1
         elif hasattr(message, "directional"): return 2
-    
-    def add_light(self, window):
-        window.lights.append(self.light_basics)
 
     def on_new(self, message: Message):
         
         light_type = self.get_light_type(message)
         self.light_basics = {
-            "position": (0, 0, 0, 0),
             "color": message.color if hasattr(message, "color") else (1.0, 1.0, 1.0),
-            "ambient": (.5, .5, .5),
-            "falloff": .5,
-            "radius": 10,
+            "ambient": (.1, .1, .1),
             "type": light_type, 
         }
 
-        self.client.callback_queue.put((self.add_light, []))
 
 class ImageDelegate(Delegate):
     
