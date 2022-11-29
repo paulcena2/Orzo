@@ -179,6 +179,7 @@ class PhongProgram(MeshProgram):
                 out vec3 v_normal;
                 out vec3 v_position;
                 out vec3 v_view_position;
+                out mat4 view;
 
                 void main() {
 
@@ -189,13 +190,14 @@ class PhongProgram(MeshProgram):
                     vec3 col3 = vec3(2 * (q[1]*q[3] + q[0]*q[2]), 2 * (q[2]*q[3] - q[0]*q[1]), 2 * (q[0]*q[0] + q[3]*q[3]) - 1);
                     mat3 rotation_matrix = mat3(col1, col2, col3);
 
-                    mat4 mv = m_cam * m_model;
+                    view = m_cam;
+                    mat4 mv = view * m_model;
                     vec4 position = mv * vec4((rotation_matrix * in_position * vec3(instance_matrix[3])) +  vec3(instance_matrix[0]), 1.0);
 
                     gl_Position = m_proj * position;
 
                     mat3 normal_matrix = transpose(inverse(mat3(mv)));
-                    v_normal = normal_matrix * in_normal;
+                    v_normal = normal_matrix * in_normal; // need to normalize?
                     v_position = position.xyz;
                     v_color = in_color * instance_matrix[1];
 
@@ -218,6 +220,7 @@ class PhongProgram(MeshProgram):
                 in vec3 v_normal;
                 in vec4 v_color;
                 in vec3 v_view_position;
+                in mat4 view;
 
                 uniform int num_lights;
                 uniform LightInfo lights[8];
@@ -227,18 +230,30 @@ class PhongProgram(MeshProgram):
 
                 void main() {
 
+                    f_color = vec4(0.0);
                     int i = 0;
                     while (i < num_lights){
                         
                         LightInfo light = lights[i];
 
+                        vec4 lightPosition = view * vec4(light.world_position, 1.0);
+                        vec3 lightVector = lightPosition.xyz - v_view_position;
+                        //vec3 lightVector = light.world_position - v_position;
+                        float lightDistance = length(lightVector);
+                        float falloff = 1 / (lightDistance * lightDistance); // place holder for now - need to figure out range
+
+                        vec3 L = normalize(lightVector);
+                        vec3 N = normalize(v_normal);
+
+                        float specular = 0.0;
+                        vec4 diffuse = light.color * max(0.0, dot(L, N)) * falloff; // using lambertian attenuation
+                        vec3 ambient = light.ambient;
+                        vec4 diffuseColor = material_color * v_color;
+
+                        f_color += diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular;
                         i += 1;
                     }
-
-                    float specular = 1.0;
-
-                    f_color = material_color;
-                    //f_color = diffuse_color * (diffuse + light.ambient) + specular;
+                    
                 }
             ''',
         )
@@ -264,13 +279,12 @@ class PhongProgram(MeshProgram):
         lights = mesh.lights
         num_lights = len(lights)
         self.program["num_lights"].value = num_lights
-        #self.program["lights"].write(b'test')
 
         # Set light values - better way to pass dict directly? getting value error cause key doesn't match program's dict
         light_attrs = ["world_position", "color", "ambient", "type"]
         for i, light in zip(range(num_lights), lights):
-            for j in range(4):
-                self.program[f"lights[{i}].{light_attrs[j]}"].value = light[j]
+            for attr in range(len(light_attrs)):
+                self.program[f"lights[{i}].{light_attrs[attr]}"].value = light[attr]
 
         mesh.vao.render(self.program, instances = self.num_instances)
     
