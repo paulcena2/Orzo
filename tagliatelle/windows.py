@@ -19,6 +19,7 @@ class Window(mglw.WindowConfig):
         self.camera = mglw.scene.camera.KeyboardCamera(self.wnd.keys, aspect_ratio=self.wnd.aspect_ratio)
         self.camera.projection.update(near=0.1, far=100.0)
         self.camera.mouse_sensitivity = 0.1
+        self.camera.velocity = 1.0
         self.camera.zoom = 2.5
         self.wnd.mouse_exclusivity = True
         self.camera_enabled = True

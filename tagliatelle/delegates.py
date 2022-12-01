@@ -593,7 +593,12 @@ class GeometryDelegate(Delegate):
 
             # mesh.mesh_program = programs.InstanceProgram(window.ctx, num_instances)
             mesh.mesh_program = programs.PhongProgram(window.ctx, num_instances)
-            print(f"Instance rendering: \n{np.frombuffer(instance_bytes, np.single).tolist()}")
+            instance_list = np.frombuffer(instance_bytes, np.single).tolist()
+            positions = []
+            for i in range(num_instances):
+                j = 16 * i
+                positions.append(instance_list[j:j+3])
+            print(f"Instance rendering positions: \n{positions}")
 
         else:
             mesh.mesh_program = programs.BaseProgram(window.ctx)

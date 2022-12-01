@@ -178,7 +178,6 @@ class PhongProgram(MeshProgram):
                 out vec4 v_color;
                 out vec3 v_normal;
                 out vec3 v_position;
-                out vec3 v_view_position;
                 out mat4 view;
 
                 void main() {
@@ -200,9 +199,6 @@ class PhongProgram(MeshProgram):
                     v_normal = normal_matrix * in_normal; // need to normalize?
                     v_position = position.xyz;
                     v_color = in_color * instance_matrix[1];
-
-                    vec4 view_model_position = mv * position;
-                    v_view_position = view_model_position.xyz;
                 }
             ''',
             fragment_shader='''
@@ -219,7 +215,6 @@ class PhongProgram(MeshProgram):
                 in vec3 v_position;
                 in vec3 v_normal;
                 in vec4 v_color;
-                in vec3 v_view_position;
                 in mat4 view;
 
                 uniform int num_lights;
@@ -236,18 +231,31 @@ class PhongProgram(MeshProgram):
                         
                         LightInfo light = lights[i];
 
+                        // Computer diffuse
                         vec4 lightPosition = view * vec4(light.world_position, 1.0);
-                        vec3 lightVector = lightPosition.xyz - v_view_position;
-                        //vec3 lightVector = light.world_position - v_position;
+                        vec3 lightVector = lightPosition.xyz - v_position;
                         float lightDistance = length(lightVector);
-                        float falloff = 1 / (lightDistance * lightDistance); // place holder for now - need to figure out range
+                        float falloff = 1 / (lightDistance * lightDistance); // place holder for now - need to figure out range / light type
 
                         vec3 L = normalize(lightVector);
+                        vec3 V = normalize(v_position);
                         vec3 N = normalize(v_normal);
-
-                        float specular = 0.0;
                         vec4 diffuse = light.color * max(0.0, dot(L, N)) * falloff; // using lambertian attenuation
+
+                        // Compute Specular
+                        float shininess = 20.0;
+                        float specularStrength = 0.5;
+                        float specularScale = 0.65;
+                        vec3 reflection = -reflect(-L, N);
+                        float specularPower = pow(max(0.0, dot(V, reflection)), shininess);
+                        //vec3 h = normalize(V + L);
+                        //float specularPower = pow(max(0.0, dot(N, h)), shininess);
+                        float specular = specularStrength * specularPower * specularScale * falloff;
+
+                        // Get Ambient
                         vec3 ambient = light.ambient;
+                        
+                        // Get diffuse color
                         vec4 diffuseColor = material_color * v_color;
 
                         f_color += diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular;
@@ -286,6 +294,7 @@ class PhongProgram(MeshProgram):
             for attr in range(len(light_attrs)):
                 self.program[f"lights[{i}].{light_attrs[attr]}"].value = light[attr]
 
+       #  print(f"Light Positions: {[light[0] for light in lights]}")
         mesh.vao.render(self.program, instances = self.num_instances)
     
     def apply(self, mesh):
