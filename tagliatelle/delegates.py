@@ -439,20 +439,26 @@ class EntityDelegate(Delegate):
         for light_id in self.info.lights:
             light_info = self.client.get_component("lights", tuple(light_id)).light_basics
             world_transform = self.get_world_transform()
-            world_position = np.matmul(world_transform, np.array([1.0, 1.0, 1.0, 1.0]))
+            world_pos = np.matmul(world_transform, np.array([0.0, 0.0, 0.0, 1.0]))
             full_light_info = (
-                tuple(world_position[:3]),
+                (world_pos[0]/world_pos[3], world_pos[1]/world_pos[3], world_pos[2]/world_pos[3]),
                 tuple(light_info["color"]),
                 light_info["ambient"],
                 light_info["type"]
             )
+            # full_light_info = (
+            #     (1, 1, 1),
+            #     tuple(light_info["color"]),
+            #     light_info["ambient"],
+            #     light_info["type"]
+            # )
             window.lights.add(full_light_info)
             window.num_lights += 1
 
 
     def get_world_transform(self):
 
-        local_transform = np.array(self.info.transform).reshape(4, 4)
+        local_transform = np.array(self.info.transform).reshape(4, 4).swapaxes(0, 1)
 
         if not hasattr(self.info, "parent"):
             return local_transform
@@ -595,10 +601,13 @@ class GeometryDelegate(Delegate):
             mesh.mesh_program = programs.PhongProgram(window.ctx, num_instances)
             instance_list = np.frombuffer(instance_bytes, np.single).tolist()
             positions = []
+            rotations = []
             for i in range(num_instances):
                 j = 16 * i
                 positions.append(instance_list[j:j+3])
+                rotations.append(instance_list[j+8:j+12])
             print(f"Instance rendering positions: \n{positions}")
+            print(f"Instance rendering rotations: \n{rotations}")
 
         else:
             mesh.mesh_program = programs.BaseProgram(window.ctx)
