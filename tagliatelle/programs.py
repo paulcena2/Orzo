@@ -189,15 +189,16 @@ class PhongProgram(MeshProgram):
                     vec3 col3 = vec3(2 * (q[1]*q[3] + q[0]*q[2]), 2 * (q[2]*q[3] - q[0]*q[1]), 2 * (q[0]*q[0] + q[3]*q[3]) - 1);
                     mat3 rotation_matrix = mat3(col1, col2, col3);
 
+
                     view = m_cam;
                     mat4 mv = view * m_model;
-                    vec4 local_position = vec4((in_position * vec3(instance_matrix[3])) +  vec3(instance_matrix[0]), 1.0);
+                    vec4 local_position = vec4(rotation_matrix * (in_position * vec3(instance_matrix[3])) +  vec3(instance_matrix[0]), 1.0);
                     vec4 view_position = mv * local_position;
 
                     gl_Position = m_proj * view_position;
 
                     mat3 normal_matrix = transpose(inverse(mat3(mv)));
-                    normal = (m_model * vec4(in_normal, 1.0)).xyz;
+                    normal = (m_model * vec4(rotation_matrix * in_normal, 1.0)).xyz;
                     color = in_color * instance_matrix[1];
                     world_position = (m_model * local_position).xyz;
                 }
@@ -258,8 +259,7 @@ class PhongProgram(MeshProgram):
                         
                         // Get diffuse color
                         vec4 diffuseColor = material_color * color;
-                        if (i == 0)
-                            f_color += diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular;
+                        f_color += diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular;
                         i += 1;
                     }
                     
