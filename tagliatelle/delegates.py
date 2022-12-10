@@ -426,7 +426,7 @@ class EntityDelegate(Delegate):
         
         # Prepare Mesh
         render_rep = self.info.render_rep
-        geometry = self.client.state["geometries"][render_rep.mesh]
+        geometry = self.client.state["geometries"][render_rep["mesh"]]
         patches = geometry.patches
         instances = render_rep.instances if hasattr(render_rep, "instances") else None
         
@@ -437,23 +437,21 @@ class EntityDelegate(Delegate):
     def attach_lights(self, window):
 
         for light_id in self.info.lights:
-            light_info = self.client.get_component("lights", tuple(light_id)).light_basics
+
+            # Add Positiona and direction to info
+            light_delegate = self.client.get_component("lights", tuple(light_id))
+            light_info = light_delegate.light_basics
             world_transform = self.get_world_transform()
             world_pos = np.matmul(world_transform, np.array([0.0, 0.0, 0.0, 1.0]))
-            full_light_info = (
-                (world_pos[0]/world_pos[3], world_pos[1]/world_pos[3], world_pos[2]/world_pos[3]),
-                tuple(light_info["color"]),
-                light_info["ambient"],
-                light_info["type"]
-            )
-            # full_light_info = (
-            #     (1, 1, 1),
-            #     tuple(light_info["color"]),
-            #     light_info["ambient"],
-            #     light_info["type"]
-            # )
-            window.lights.add(full_light_info)
-            window.num_lights += 1
+            direction = np.matmul(world_transform, np.array([0.0, 0.0, -1.0, 1.0]))
+            light_info["world_position"] = (world_pos[0]/world_pos[3], world_pos[1]/world_pos[3], world_pos[2]/world_pos[3])
+            light_info["direction"] = (direction[0]/direction[3], direction[1]/direction[3], direction[2]/direction[3])
+        
+            # Update State
+            id = light_delegate.info.id
+            if id not in window.lights:
+                window.lights[id]= light_info
+                window.num_lights += 1
 
 
     def get_world_transform(self):
@@ -469,11 +467,13 @@ class EntityDelegate(Delegate):
 
 
     def on_new(self, message: Message):
+       
         if hasattr(self.info, "render_rep"):
             self.client.callback_queue.put((self.render_entity, []))
 
         if hasattr(self.info, "lights"):
             self.client.callback_queue.put((self.attach_lights, []))
+
 
     def on_remove(self, message: Message):
         
@@ -509,7 +509,7 @@ class MaterialDelegate(Delegate):
         """
         self.name = "No-Name Material" if not hasattr(message, "name") else message.name
 
-        material = mglw.scene.Material(f"{self.name}'s Material")
+        material = mglw.scene.Material(f"{self.name}")
         material.color = message.pbr_info.base_color
         if hasattr(message, "normal_texture"):
             texture = self.client.get_component("textures", message.normal_texture.texture)
@@ -560,11 +560,11 @@ class GeometryDelegate(Delegate):
         # Construct vertex array object from buffer and buffer view
         view = self.buffer_view
         buffer = view.buffer
-        index_offset = patch.indicies["offset"] 
+        index_offset = patch.indices["offset"] 
         buffer_format = self.construct_format_str(noodle_attributes)
         vao = mglw.opengl.vao.VAO(name=f"{self.name} Patch VAO", mode=MODE_MAP[patch['type']])
         vao.buffer(buffer.bytes[:index_offset], buffer_format, [info["name"] for info in new_attributes.values()])
-        index_bytes, index_size = buffer.bytes[index_offset:], FORMAT_MAP[patch.indicies["format"]].size
+        index_bytes, index_size = buffer.bytes[index_offset:], FORMAT_MAP[patch.indices["format"]].size
         vao.index_buffer(index_bytes, index_size)
 
         # Add default attributes for those that are missing
@@ -652,13 +652,35 @@ class LightDelegate(Delegate):
         elif hasattr(message, "spot"): return 1
         elif hasattr(message, "directional"): return 2
 
+    def format_color(self, color):
+        formatted = [*color]
+        if len(formatted) == 3:
+            formatted.append(1.0)
+        if color[0] > 1 or color[1] > 1 or color[2] > 1:
+            for i in range(3):
+                formatted[i] /= 255
+        return tuple(formatted)
+
     def on_new(self, message: Message):
         
+        # Add info based on light type
         light_type = self.get_light_type(message)
+        color = self.format_color(message.color) if hasattr(message, "color") else (1.0, 1.0, 1.0, 10)
+        intensity = message.intensity if hasattr(message, "intensity") else 1
+        if light_type == 0:
+            info = (intensity, message.point.range, 0.0, 0.0)
+        elif light_type == 1:
+            spot_info = message.spot
+            info = (intensity, spot_info.range, spot_info.inner_cone_angle_rad, spot_info.outer_cone_angle_rad)
+        else:
+            info = (intensity, message.directional.range, 0.0, 0.0)
+
+        # Arrange info into dict to store
         self.light_basics = {
-            "color": message.color if hasattr(message, "color") else (1.0, 1.0, 1.0),
+            "color": color,
             "ambient": (.1, .1, .1),
-            "type": light_type, 
+            "type": light_type,
+            "info": info,
         }
 
 

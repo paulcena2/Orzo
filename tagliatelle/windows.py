@@ -23,13 +23,14 @@ class Window(mglw.WindowConfig):
         self.camera.zoom = 2.5
         self.wnd.mouse_exclusivity = True
         self.camera_enabled = True
-        self.lights = set() # set of entities with lights
+        self.lights = {} # light_id: light_info
         self.num_lights = 0
 
         self.scene = mglw.scene.Scene("Noodles Scene")
         root = mglw.scene.Node("Root")
         root.matrix_global = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
         self.scene.root_nodes.append(root)
+        self.scene.cameras.append(self.camera)
 
     def key_event(self, key, action, modifiers):
         print(f"Key Event: {key}")
@@ -68,5 +69,6 @@ class Window(mglw.WindowConfig):
             print(f"Callback in render: {callback} \n\tw/ args: {args}")
             callback(self, *args)
         except queue.Empty:
+
             pass
 

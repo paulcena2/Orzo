@@ -212,6 +212,8 @@ class PhongProgram(MeshProgram):
                     vec4 color;
                     vec3 ambient;
                     int type;
+                    vec4 info;
+                    vec3 direction;
                 };
                 
                 in vec3 world_position;
@@ -234,20 +236,45 @@ class PhongProgram(MeshProgram):
                     while (i < num_lights){
                         
                         LightInfo light = lights[i];
+                        float intensity = light.info[0];
+                        float range = light.info[1];
 
-                        // Computer diffuse
                         vec3 lightVector = light.world_position - world_position;
                         float lightDistance = length(lightVector);
-                        float falloff = 1 / (lightDistance * lightDistance); // place holder for now - need to figure out range / light type
-
+                        
                         vec3 L = normalize(lightVector);
                         vec3 V = normalize(world_position - camera_position.xyz);
                         vec3 N = normalize(normal);
+                        
+                        float falloff = 0.0;
+                        // Point Light
+                        if (light.type == 0)
+                            falloff = 1 / (1 + lightDistance * lightDistance);
+                            //falloff = 5;
+
+                        // Spot Light
+                        else if (light.type == 1) {
+                            falloff = 1 / (1.0 + lightDistance * lightDistance);
+                            float outer_angle = light.info[2];
+                            float inner_angle = light.info[3];
+                            float lightAngleScale = 1.0 / max(.001, cos(inner_angle) - cos(outer_angle));
+                            float lightAngleOffset = -cos(outer_angle) * lightAngleScale;
+                            float cd = dot(light.direction, L);
+                            float angularAttenuation = clamp((cd * lightAngleScale + lightAngleOffset), 0.0, 1.0);
+                            angularAttenuation *= angularAttenuation;
+                            falloff *= angularAttenuation;
+                        }
+
+                        // Directional Light
+                        else
+                            falloff = 1.0;
+                        
+                        // Computer diffuse
                         vec4 diffuse = light.color * max(0.0, dot(L, N)) * falloff; // using lambertian attenuation
 
                         // Compute Specular
-                        float shininess = 20.0;
-                        float specularStrength = 0.3;
+                        float shininess = 15.0;
+                        float specularStrength = 0.5;
                         vec3 reflection = reflect(L, N);
                         float specularPower = pow(max(0.0, dot(V, reflection)), shininess);
                         //vec3 h = normalize(V + L);
@@ -260,9 +287,10 @@ class PhongProgram(MeshProgram):
                         // Get diffuse color
                         vec4 diffuseColor = material_color * color;
                         f_color += diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular;
+                        //f_color += vec4(ambient, 1.0) + specular;
                         i += 1;
                     }
-                    
+                
                 }
             ''',
         )
@@ -285,17 +313,18 @@ class PhongProgram(MeshProgram):
         else:
             self.program["material_color"].value = (1.0, 1.0, 1.0, 1.0)
 
-        lights = mesh.lights
+        lights = mesh.lights.values()
         num_lights = len(lights)
         self.program["num_lights"].value = num_lights
 
-        # Set light values - better way to pass dict directly? getting value error cause key doesn't match program's dict
-        light_attrs = ["world_position", "color", "ambient", "type"]
+        # Set light values - better way to pass dict directly?
         for i, light in zip(range(num_lights), lights):
-            for attr in range(len(light_attrs)):
-                self.program[f"lights[{i}].{light_attrs[attr]}"].value = light[attr]
-
-        # print(f"Light Positions: {[light[0] for light in lights]}")
+            for attr, val in light.items():
+                self.program[f"lights[{i}].{attr}"].value = val
+                #self.program[f"lights[{i}].{attr}"].write(bytes(val))
+       
+        # positions = [light.get("world_position") for light in lights]
+        # print(f"Light Positions: {positions}")
         mesh.vao.render(self.program, instances = self.num_instances)
     
     def apply(self, mesh):
