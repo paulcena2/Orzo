@@ -456,6 +456,7 @@ class EntityDelegate(Delegate):
 
     def get_world_transform(self):
 
+        # Swap axis to go from col major -> row major order
         local_transform = np.array(self.info.transform).reshape(4, 4).swapaxes(0, 1)
 
         if not hasattr(self.info, "parent"):
@@ -625,8 +626,8 @@ class GeometryDelegate(Delegate):
     def remove_from_render(self, window):
         # Need to test, enough to remove from render?
         for node in self.nodes:
-            window.scene.root_nodes[0].children.remove(self.node)
-            window.scene.nodes.remove(self.node)
+            window.scene.root_nodes[0].children.remove(node)
+            window.scene.nodes.remove(node)
 
     
     def on_new(self, message: Message):

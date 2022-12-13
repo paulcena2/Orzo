@@ -1,3 +1,5 @@
+import numpy as np
+
 from moderngl_window.scene import MeshProgram
 
 
@@ -178,7 +180,6 @@ class PhongProgram(MeshProgram):
                 out vec4 color;
                 out vec3 normal;
                 out vec3 world_position;
-                out mat4 view;
 
                 void main() {
 
@@ -189,16 +190,16 @@ class PhongProgram(MeshProgram):
                     vec3 col3 = vec3(2 * (q[1]*q[3] + q[0]*q[2]), 2 * (q[2]*q[3] - q[0]*q[1]), 2 * (q[0]*q[0] + q[3]*q[3]) - 1);
                     mat3 rotation_matrix = mat3(col1, col2, col3);
 
-
-                    view = m_cam;
-                    mat4 mv = view * m_model;
+                    mat4 mv = m_cam * m_model;
                     vec4 local_position = vec4(rotation_matrix * (in_position * vec3(instance_matrix[3])) +  vec3(instance_matrix[0]), 1.0);
+                    //vec4 local_position = vec4((in_position * vec3(instance_matrix[3])) +  vec3(instance_matrix[0]), 1.0);                    
                     vec4 view_position = mv * local_position;
 
                     gl_Position = m_proj * view_position;
 
                     mat3 normal_matrix = transpose(inverse(mat3(mv)));
-                    normal = (m_model * vec4(rotation_matrix * in_normal, 1.0)).xyz;
+                    normal = (m_model * vec4(rotation_matrix * normalize(in_normal), 1.0)).xyz;
+                    //normal = (m_model * vec4(in_normal, 1.0)).xyz;
                     color = in_color * instance_matrix[1];
                     world_position = (m_model * local_position).xyz;
                 }
@@ -219,18 +220,16 @@ class PhongProgram(MeshProgram):
                 in vec3 world_position;
                 in vec3 normal;
                 in vec4 color;
-                in mat4 view;
 
                 uniform int num_lights;
                 uniform LightInfo lights[8];
                 uniform vec4 material_color;
+                uniform vec3 camera_position;
 
                 out vec4 f_color;
 
                 void main() {
 
-                    mat4 inv_view = inverse(view);
-                    vec4 camera_position = inv_view[3];
                     f_color = vec4(0.0);
                     int i = 0;
                     while (i < num_lights){
@@ -243,7 +242,7 @@ class PhongProgram(MeshProgram):
                         float lightDistance = length(lightVector);
                         
                         vec3 L = normalize(lightVector);
-                        vec3 V = normalize(world_position - camera_position.xyz);
+                        vec3 V = normalize(camera_position - world_position);
                         vec3 N = normalize(normal);
                         
                         float falloff = 0.0;
@@ -275,7 +274,7 @@ class PhongProgram(MeshProgram):
                         // Compute Specular
                         float shininess = 15.0;
                         float specularStrength = 0.5;
-                        vec3 reflection = reflect(L, N);
+                        vec3 reflection = -reflect(L, N);
                         float specularPower = pow(max(0.0, dot(V, reflection)), shininess);
                         //vec3 h = normalize(V + L);
                         //float specularPower = pow(max(0.0, dot(N, h)), shininess);
@@ -286,8 +285,9 @@ class PhongProgram(MeshProgram):
                         
                         // Get diffuse color
                         vec4 diffuseColor = material_color * color;
-                        f_color += diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular;
-                        //f_color += vec4(ambient, 1.0) + specular;
+                        //f_color += diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular;
+                        //f_color += (vec4(ambient, 1.0)) + specular;
+                        f_color += diffuseColor * diffuse + specular;
                         i += 1;
                     }
                 
@@ -307,6 +307,12 @@ class PhongProgram(MeshProgram):
         self.program["m_proj"].write(projection_matrix)
         self.program["m_model"].write(model_matrix)
         self.program["m_cam"].write(camera_matrix)
+
+        camera_world = np.linalg.inv(camera_matrix).m4
+        camera_position = (camera_world[2], camera_world[0], camera_world[1])
+        #camera_position = (camera_world[0], camera_world[1], camera_world[2])
+        self.program["camera_position"].value = camera_position
+        print(f"Camera Position: {camera_position}")
 
         if mesh.material:
             self.program["material_color"].value = tuple(mesh.material.color)
