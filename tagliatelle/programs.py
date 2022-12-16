@@ -197,10 +197,12 @@ class PhongProgram(MeshProgram):
 
                     gl_Position = m_proj * view_position;
 
-                    mat3 normal_matrix = transpose(inverse(mat3(mv)));
-                    normal = (m_model * vec4(rotation_matrix * normalize(in_normal), 1.0)).xyz;
+                    mat3 normal_matrix = mat3(m_model);
+                    //normal = (m_model * vec4(rotation_matrix * normalize(in_normal), 1.0)).xyz;
                     //normal = (m_model * vec4(in_normal, 1.0)).xyz;
+                    normal = normalize(normal_matrix * rotation_matrix * in_normal);
                     color = in_color * instance_matrix[1];
+                    //color = instance_matrix[1];
                     world_position = (m_model * local_position).xyz;
                 }
             ''',
@@ -230,7 +232,7 @@ class PhongProgram(MeshProgram):
 
                 void main() {
 
-                    f_color = vec4(0.0);
+                    f_color = vec4(0.0, 0.0, 0.0, 1.0);
                     int i = 0;
                     while (i < num_lights){
                         
@@ -284,13 +286,14 @@ class PhongProgram(MeshProgram):
                         vec3 ambient = light.ambient;
                         
                         // Get diffuse color
-                        vec4 diffuseColor = material_color * color;
-                        //f_color += diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular;
+                        vec4 ccc = material_color;
+                        vec4 diffuseColor = color;
+                        f_color += diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular;
                         //f_color += (vec4(ambient, 1.0)) + specular;
-                        f_color += diffuseColor * diffuse + specular;
+                        //f_color += diffuse;
+                        //f_color += diffuseColor * diffuse;
                         i += 1;
-                    }
-                
+                    } 
                 }
             ''',
         )
@@ -309,8 +312,8 @@ class PhongProgram(MeshProgram):
         self.program["m_cam"].write(camera_matrix)
 
         camera_world = np.linalg.inv(camera_matrix).m4
-        camera_position = (camera_world[2], camera_world[0], camera_world[1])
-        #camera_position = (camera_world[0], camera_world[1], camera_world[2])
+        #camera_position = (camera_world[2], camera_world[0], camera_world[1])
+        camera_position = (camera_world[0], camera_world[1], camera_world[2])
         self.program["camera_position"].value = camera_position
         print(f"Camera Position: {camera_position}")
 

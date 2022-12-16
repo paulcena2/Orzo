@@ -595,6 +595,7 @@ class GeometryDelegate(Delegate):
             instance_buffer = instance_view.buffer
             instance_bytes = instance_buffer.bytes
             num_instances = int(instance_buffer.size / 64) # 16 4 byte floats per instance
+            print(f"Instance Bytes: \n{np.frombuffer(instance_bytes, dtype=np.single)}")
 
             vao.buffer(instance_bytes, '16f/i', 'instance_matrix')
 
