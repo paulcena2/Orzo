@@ -158,6 +158,8 @@ class PhongProgram(MeshProgram):
     """
     Instance Rendering Program with Phong Shading
     """
+    current_camera_matrix = None
+    camera_position = None
 
     def __init__(self, ctx, num_instances, **kwargs):
         super().__init__(program=None)
@@ -311,11 +313,13 @@ class PhongProgram(MeshProgram):
         self.program["m_model"].write(model_matrix)
         self.program["m_cam"].write(camera_matrix)
 
-        camera_world = np.linalg.inv(camera_matrix).m4
-        #camera_position = (camera_world[2], camera_world[0], camera_world[1])
-        camera_position = (camera_world[0], camera_world[1], camera_world[2])
-        self.program["camera_position"].value = camera_position
-        print(f"Camera Position: {camera_position}")
+        # Only invert matrix / calculate camera position if camera is moved
+        if list(camera_matrix) != PhongProgram.current_camera_matrix:
+            PhongProgram.current_camera_matrix = list(camera_matrix)
+            camera_world = np.linalg.inv(camera_matrix).m4
+            PhongProgram.camera_position = tuple(camera_world[:3])
+        self.program["camera_position"].value = PhongProgram.camera_position
+        #print(f"Camera Position: {PhongProgram.camera_position}")
 
         if mesh.material:
             self.program["material_color"].value = tuple(mesh.material.color)
@@ -330,10 +334,9 @@ class PhongProgram(MeshProgram):
         for i, light in zip(range(num_lights), lights):
             for attr, val in light.items():
                 self.program[f"lights[{i}].{attr}"].value = val
-                #self.program[f"lights[{i}].{attr}"].write(bytes(val))
        
-        # positions = [light.get("world_position") for light in lights]
-        # print(f"Light Positions: {positions}")
+        positions = [light.get("world_position") for light in lights]
+        print(f"Light Positions: {positions}")
         mesh.vao.render(self.program, instances = self.num_instances)
     
     def apply(self, mesh):
