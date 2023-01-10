@@ -319,7 +319,7 @@ class PhongProgram(MeshProgram):
             camera_world = np.linalg.inv(camera_matrix).m4
             PhongProgram.camera_position = tuple(camera_world[:3])
         self.program["camera_position"].value = PhongProgram.camera_position
-        #print(f"Camera Position: {PhongProgram.camera_position}")
+        print(f"Camera Position: {PhongProgram.camera_position}")
 
         if mesh.material:
             self.program["material_color"].value = tuple(mesh.material.color)
@@ -336,7 +336,7 @@ class PhongProgram(MeshProgram):
                 self.program[f"lights[{i}].{attr}"].value = val
        
         positions = [light.get("world_position") for light in lights]
-        print(f"Light Positions: {positions}")
+        #print(f"Light Positions: {positions}")
         mesh.vao.render(self.program, instances = self.num_instances)
     
     def apply(self, mesh):
