@@ -417,12 +417,24 @@ class DocumentDelegate(Delegate):
 
 
 class EntityDelegate(Delegate):
+    """Delegate for overarching entities
+    
+    Can be container for storing meshes, lights, or plots
+    
+    Attributes:
+        name (str): Name of the entity, defaults to 'No-Name Entity'
+    """
 
     def __init__(self, client: Client, message: Message, specifier: str):
         super().__init__(client, message, specifier)
         self.name = "No-Name Entity" if not hasattr(self.info, "name") else self.info.name
 
+
     def render_entity(self, window):
+        """Render the mesh associated with this delegate
+        
+        Will be called as callback from window
+        """
         
         # Prepare Mesh
         render_rep = self.info.render_rep
@@ -434,7 +446,9 @@ class EntityDelegate(Delegate):
         for patch in patches:
             geometry.render_patch(patch, instances, window)
 
+
     def attach_lights(self, window):
+        """Callback to handle lights attached to an entity"""
 
         for light_id in self.info.lights:
 
@@ -455,6 +469,7 @@ class EntityDelegate(Delegate):
 
 
     def get_world_transform(self):
+        """Recursive function to get world transform for an entity"""
 
         # Swap axis to go from col major -> row major order
         local_transform = np.array(self.info.transform).reshape(4, 4).swapaxes(0, 1)
@@ -486,35 +501,20 @@ class PlotDelegate(Delegate):
 
 
 class MaterialDelegate(Delegate):
+    """Delegate representing a Noodles Material"""
     
     def on_new(self, message: Message):
-        """"
-        MsgMaterialCreate = {
-            id : MaterialID,
-            ? name : tstr,
+        """"Create mglw_material from noodles message"""
 
-            ? pbr_info : PBRInfo, ; if missing, defaults
-            ? normal_texture : TextureRef,
-            
-            ? occlusion_texture : TextureRef, ; assumed to be linear, ONLY R used
-            ? occlusion_texture_factor : float, ; assume 1 by default
-
-            ? emissive_texture : TextureRef, ; assumed to be SRGB. ignore A.
-            ? emissive_factor  : Vec3, ; all 1 by default
-
-            ? use_alpha    : bool,  ; false by default
-            ? alpha_cutoff : float, ; .5 by default
-
-            ? double_sided : bool, ; false by default
-        }
-        """
         self.name = "No-Name Material" if not hasattr(message, "name") else message.name
 
         material = mglw.scene.Material(f"{self.name}")
         material.color = message.pbr_info.base_color
-        if hasattr(message, "normal_texture"):
-            texture = self.client.get_component("textures", message.normal_texture.texture)
-            material.mat_texture = mglw.scene.MaterialTexture(texture.mglw_texture, texture.mglw_sampler)
+
+        # For now, use default texture
+        # if hasattr(message, "normal_texture"):
+        #     texture = self.client.get_component("textures", message.normal_texture.texture)
+        #     material.mat_texture = mglw.scene.MaterialTexture(texture.mglw_texture, texture.mglw_sampler)
     
         material.double_sided = False if not hasattr(message, "double_sided") else message.double_sided
         self.mglw_material = material
@@ -550,7 +550,7 @@ class GeometryDelegate(Delegate):
         
         scene = window.scene
 
-        # Get Material - TODO: convert from noodles to mglw
+        # Get Material - for now material delegate uses default texture
         material = self.client.get_component("materials", patch.material)
         scene.materials.append(material.mglw_material)
 
@@ -584,47 +584,48 @@ class GeometryDelegate(Delegate):
             buffer_data = np.array(default_texture_coords, np.single)
             vao.buffer(buffer_data, '2f', 'in_color')
     
-        # Create Mesh and add rendering program
+        # Create Mesh and add lights
         mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material.mglw_material, attributes=new_attributes)
         mesh.lights = window.lights
         mesh.num_lights = window.num_lights
         
-        # Add instances to vao if applicable
+        # Add instances to vao if applicable, also add appropriate mesh program
         if instances:
             instance_view = self.client.state["bufferviews"][instances.view]
             instance_buffer = instance_view.buffer
             instance_bytes = instance_buffer.bytes
-            num_instances = int(instance_buffer.size / 64) # 16 4 byte floats per instance
-            print(f"Instance Bytes: \n{np.frombuffer(instance_bytes, dtype=np.single)}")
-
             vao.buffer(instance_bytes, '16f/i', 'instance_matrix')
 
-            # mesh.mesh_program = programs.InstanceProgram(window.ctx, num_instances)
+            num_instances = int(instance_buffer.size / 64) # 16 4 byte floats per instance
             mesh.mesh_program = programs.PhongProgram(window.ctx, num_instances)
-            instance_list = np.frombuffer(instance_bytes, np.single).tolist()
-            positions = []
-            rotations = []
-            for i in range(num_instances):
-                j = 16 * i
-                positions.append(instance_list[j:j+3])
-                rotations.append(instance_list[j+8:j+12])
-            print(f"Instance rendering positions: \n{positions}")
-            print(f"Instance rendering rotations: \n{rotations}")
+
+            # For debugging, instances...
+            # instance_list = np.frombuffer(instance_bytes, np.single).tolist()
+            # positions = []
+            # rotations = []
+            # for i in range(num_instances):
+            #     j = 16 * i
+            #     positions.append(instance_list[j:j+3])
+            #     rotations.append(instance_list[j+8:j+12])
+            # print(f"Instance rendering positions: \n{positions}")
+            # print(f"Instance rendering rotations: \n{rotations}")
 
         else:
             mesh.mesh_program = programs.BaseProgram(window.ctx)
-        scene.meshes.append(mesh)
         
         # Add mesh as new node to scene graph
-        new_mesh_node = mglw.scene.Node(self.name, mesh=mesh)
+        scene.meshes.append(mesh)
+        new_mesh_node = mglw.scene.Node(self.name, mesh=mesh, matrix=np.identity(4))
         root = scene.root_nodes[0]
-        new_mesh_node.matrix_global = root.matrix_global # Is this how matrices should work here?
+        new_mesh_node.matrix_global = root.matrix_global
         root.add_child(new_mesh_node)
         window.scene.nodes.append(new_mesh_node)
         self.nodes.append(new_mesh_node)
 
 
     def remove_from_render(self, window):
+        """Remove mesh from render"""
+
         # Need to test, enough to remove from render?
         for node in self.nodes:
             window.scene.root_nodes[0].children.remove(node)
@@ -644,17 +645,23 @@ class GeometryDelegate(Delegate):
 
 
     def on_remove(self, message: Message):
+
         self.client.callback_queue.put((self.remove_from_render, []))
 
 
 class LightDelegate(Delegate):
+    """Delegate to store basic info associated with that light"""
 
     def get_light_type(self, message):
+        """Helper to get light type from message"""
+
         if hasattr(message, "point"): return 0
         elif hasattr(message, "spot"): return 1
         elif hasattr(message, "directional"): return 2
 
     def format_color(self, color):
+        """Helper to reformat colors to rgba floats"""
+
         formatted = [*color]
         if len(formatted) == 3:
             formatted.append(1.0)
@@ -738,7 +745,8 @@ class SamplerDelegate(Delegate):
         self.client.callback_queue.put((self.set_up_sampler, []))
 
 
-class BufferDelegate(Delegate):  
+class BufferDelegate(Delegate):
+    """Stores Buffer Info for Easier Access"""
 
     def on_new(self, message: Message):
         self.size = message.size
@@ -751,6 +759,7 @@ class BufferDelegate(Delegate):
 
 
 class BufferViewDelegate(Delegate):
+    """Stores pointer to buffer for easier access"""
     
     def on_new(self, message: Message):
         self.buffer: BufferDelegate = self.client.state["buffers"][message.source_buffer]

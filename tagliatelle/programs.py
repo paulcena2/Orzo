@@ -5,7 +5,7 @@ from moderngl_window.scene import MeshProgram
 
 class BaseProgram(MeshProgram):
     """
-    Default Program, for now only uses
+    Default Program
     """
 
     def __init__(self, ctx, **kwargs):
@@ -59,96 +59,6 @@ class BaseProgram(MeshProgram):
             self.program["material_color"].value = (1.0, 1.0, 1.0, 1.0)
 
         mesh.vao.render(self.program)
-    
-    def apply(self, mesh):
-        return self
-
-
-class InstanceProgram(MeshProgram):
-    """
-    Instance Rendering Program
-    """
-
-    def __init__(self, ctx, num_instances, **kwargs):
-        super().__init__(program=None)
-        self.num_instances = num_instances
-        self.program = ctx.program(
-            vertex_shader='''
-                #version 330
-
-                in vec3 in_position;
-                in mat4 instance_matrix;
-
-                in vec3 in_normal;
-                in vec2 in_texture;
-                in vec4 in_color;
-                
-                uniform mat4 m_proj;
-                uniform mat4 m_model;
-                uniform mat4 m_cam;
-
-                out vec4 v_color;
-                out vec3 v_normal;
-                out vec3 v_position;
-
-                void main() {
-
-                    // Get rotation matrix from quaternion 
-                    vec4 q = instance_matrix[2];
-                    vec3 col1 = vec3(2 * (q[0]*q[0] + q[1]*q[1])-1, 2 * (q[1]*q[2] + q[0]*q[3]), 2 * (q[1]*q[3] - q[0]*q[2]));
-                    vec3 col2 = vec3(2 * (q[1]*q[2] - q[0]*q[3]), 2 * (q[0]*q[0] + q[2]*q[2]) - 1, 2 * (q[2]*q[3] + q[0]*q[1]));
-                    vec3 col3 = vec3(2 * (q[1]*q[3] + q[0]*q[2]), 2 * (q[2]*q[3] - q[0]*q[1]), 2 * (q[0]*q[0] + q[3]*q[3]) - 1);
-                    mat3 rotation_matrix = mat3(col1, col2, col3);
-
-                    mat4 mv = m_cam * m_model;
-                    vec4 position = mv * vec4((rotation_matrix * in_position * vec3(instance_matrix[3])) +  vec3(instance_matrix[0]), 1.0);
-
-                    gl_Position = m_proj * position;
-
-                    mat3 normal_matrix = transpose(inverse(mat3(mv)));
-                    v_normal = normal_matrix * in_normal;
-                    v_position = position.xyz;
-                    v_color = in_color * instance_matrix[1];
-                }
-            ''',
-            fragment_shader='''
-                #version 330
-                
-                in vec3 v_position;
-                in vec3 v_normal;
-                in vec4 v_color;
-
-                uniform vec4 material_color;
-
-                out vec4 f_color;
-
-                void main() {
-                    // using camera as light source
-                    float light = dot(normalize(-v_position), normalize(v_normal));
-                    f_color = material_color * v_color * (.25 + abs(light) * .75);
-                }
-            ''',
-        )
-
-    def draw(
-        self,
-        mesh,
-        projection_matrix=None,
-        model_matrix=None,
-        camera_matrix=None,
-        time=0,
-    ):
-
-        self.program["m_proj"].write(projection_matrix)
-        self.program["m_model"].write(model_matrix)
-        self.program["m_cam"].write(camera_matrix)
-
-        if mesh.material:
-            self.program["material_color"].value = tuple(mesh.material.color)
-        else:
-            self.program["material_color"].value = (1.0, 1.0, 1.0, 1.0)
-
-        mesh.vao.render(self.program, instances = self.num_instances)
     
     def apply(self, mesh):
         return self
@@ -319,7 +229,7 @@ class PhongProgram(MeshProgram):
             camera_world = np.linalg.inv(camera_matrix).m4
             PhongProgram.camera_position = tuple(camera_world[:3])
         self.program["camera_position"].value = PhongProgram.camera_position
-        print(f"Camera Position: {PhongProgram.camera_position}")
+        #print(f"Camera Position: {PhongProgram.camera_position}")
 
         if mesh.material:
             self.program["material_color"].value = tuple(mesh.material.color)
@@ -336,10 +246,8 @@ class PhongProgram(MeshProgram):
                 self.program[f"lights[{i}].{attr}"].value = val
        
         positions = [light.get("world_position") for light in lights]
-        #print(f"Light Positions: {positions}")
+        print(f"Light Positions: {positions}")
         mesh.vao.render(self.program, instances = self.num_instances)
     
     def apply(self, mesh):
         return self
-
-

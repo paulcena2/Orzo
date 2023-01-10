@@ -1,13 +1,7 @@
-import queue
-
 import penne
-import moderngl
-import moderngl_window as mglw
-import multiprocessing
-import numpy as np
 
 from tagliatelle.delegates import *
-from tagliatelle.windows import *
+from tagliatelle.window import Window
 
 
 del_hash = {
@@ -35,8 +29,8 @@ def start():
     Window.client = client
     Window.run()
 
-    # Wait for client thread to finish
-    client.thread.join()
+    # Shutdown and wait for client thread to finish
+    client.shutdown()
     print(f"Finished Testing")
 
 

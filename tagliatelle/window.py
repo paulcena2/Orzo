@@ -5,7 +5,10 @@ from pathlib import Path
 import queue
 
 class Window(mglw.WindowConfig):
-    """Base class with built in 3D camera support"""
+    """Base Window with built in 3D camera support    
+    
+    Most work happens in the render function which is called every frame
+    """
   
     gl_version = (3, 3)
     aspect_ratio = 16 / 9
@@ -16,26 +19,32 @@ class Window(mglw.WindowConfig):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
+        # Set Up Camera
         self.camera = mglw.scene.camera.KeyboardCamera(self.wnd.keys, aspect_ratio=self.wnd.aspect_ratio)
         self.camera.projection.update(near=0.1, far=100.0)
         self.camera.mouse_sensitivity = 0.1
         self.camera.velocity = 1.0
         self.camera.zoom = 2.5
+        
+        # Window Options
         self.wnd.mouse_exclusivity = True
         self.camera_enabled = True
+        
+        # Store Light Info
         self.lights = {} # light_id: light_info
         self.num_lights = 0
 
+        # Create scene and set up basic nodes
         self.scene = mglw.scene.Scene("Noodles Scene")
         root = mglw.scene.Node("Root")
-        root.matrix_global = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
+        root.matrix_global = np.identity(4, np.float32)
         self.scene.root_nodes.append(root)
         self.scene.cameras.append(self.camera)
 
     def key_event(self, key, action, modifiers):
-        print(f"Key Event: {key}")
-        keys = self.wnd.keys
 
+        keys = self.wnd.keys
         if self.camera_enabled:
             self.camera.key_input(key, action, modifiers)
 
@@ -55,6 +64,14 @@ class Window(mglw.WindowConfig):
         self.camera.projection.update(aspect_ratio=self.wnd.aspect_ratio)
 
     def render(self, time: float, frametime: float):
+        """Renders a frame to on the window
+        
+        Most work done in the draw function which draws each node in the scene.
+        When drawing each node, the mesh is drawn, using the mesh program.
+        At each frame, the callback_queue is checked so the client can update the render
+        Note: each callback has the window as the first arg
+        """
+
         self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
 
         self.scene.draw(
@@ -68,7 +85,7 @@ class Window(mglw.WindowConfig):
             callback, args = callback_info
             print(f"Callback in render: {callback} \n\tw/ args: {args}")
             callback(self, *args)
-        except queue.Empty:
 
+        except queue.Empty:
             pass
 
