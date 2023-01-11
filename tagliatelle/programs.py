@@ -103,9 +103,8 @@ class PhongProgram(MeshProgram):
         for i, light in zip(range(num_lights), lights):
             for attr, val in light.items():
                 self.program[f"lights[{i}].{attr}"].value = val
-       
-        positions = [light.get("world_position") for light in lights]
-        print(f"Light Positions: {positions}")
+        #print(f"Light Positions: {[light.get("world_position") for light in lights]}")
+ 
         mesh.vao.render(self.program, instances = self.num_instances)
     
     def apply(self, mesh):

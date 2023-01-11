@@ -428,6 +428,7 @@ class EntityDelegate(Delegate):
     def __init__(self, client: Client, message: Message, specifier: str):
         super().__init__(client, message, specifier)
         self.name = "No-Name Entity" if not hasattr(self.info, "name") else self.info.name
+        self.nodes = []
 
 
     def render_entity(self, window):
@@ -444,7 +445,8 @@ class EntityDelegate(Delegate):
         
         # Render Each Patch Using Geometry Delegate
         for patch in patches:
-            geometry.render_patch(patch, instances, window)
+            node = geometry.render_patch(patch, instances, window)
+            self.nodes.append(node)
 
 
     def attach_lights(self, window):
@@ -453,7 +455,8 @@ class EntityDelegate(Delegate):
         for light_id in self.info.lights:
 
             # Add Positiona and direction to info
-            light_delegate = self.client.get_component("lights", tuple(light_id))
+            id = tuple(light_id)
+            light_delegate = self.client.get_component("lights", id)
             light_info = light_delegate.light_basics
             world_transform = self.get_world_transform()
             world_pos = np.matmul(world_transform, np.array([0.0, 0.0, 0.0, 1.0]))
@@ -462,10 +465,18 @@ class EntityDelegate(Delegate):
             light_info["direction"] = (direction[0]/direction[3], direction[1]/direction[3], direction[2]/direction[3])
         
             # Update State
-            id = light_delegate.info.id
             if id not in window.lights:
-                window.lights[id]= light_info
+                window.lights[id] = light_info
                 window.num_lights += 1
+
+
+    def remove_lights(self, window):
+        """Callback for removing lights from state"""
+        
+        for light_id in self.info.lights:
+            del window.lights[light_id]
+            window.num_lights -= 1
+
 
 
     def get_world_transform(self):
@@ -482,6 +493,15 @@ class EntityDelegate(Delegate):
             return np.matmul(parent.get_world_transform(), local_transform)
 
 
+    def remove_from_render(self, window):
+        """Remove mesh from render"""
+
+        # Need to test, enough to remove from render?
+        for node in self.nodes:
+            window.scene.root_nodes[0].children.remove(node)
+            window.scene.nodes.remove(node)
+
+
     def on_new(self, message: Message):
        
         if hasattr(self.info, "render_rep"):
@@ -492,8 +512,12 @@ class EntityDelegate(Delegate):
 
 
     def on_remove(self, message: Message):
+
+        if hasattr(self.info, "render_rep"):
+            self.client.callback_queue.put((self.remove_from_render, []))
         
-        self.client.callback_queue.put((self.remove_from_render, []))
+        if hasattr(self.info, "lights"):
+            self.client.callback_queue.put((self.remove_lights, []))
 
 
 class PlotDelegate(Delegate):
@@ -620,16 +644,7 @@ class GeometryDelegate(Delegate):
         new_mesh_node.matrix_global = root.matrix_global
         root.add_child(new_mesh_node)
         window.scene.nodes.append(new_mesh_node)
-        self.nodes.append(new_mesh_node)
-
-
-    def remove_from_render(self, window):
-        """Remove mesh from render"""
-
-        # Need to test, enough to remove from render?
-        for node in self.nodes:
-            window.scene.root_nodes[0].children.remove(node)
-            window.scene.nodes.remove(node)
+        return new_mesh_node
 
     
     def on_new(self, message: Message):
@@ -637,7 +652,6 @@ class GeometryDelegate(Delegate):
         self.name = "No-Name Geometry" if not hasattr(message, "name") else message.name
         self.patches = message.patches
         self.first_patch_attrs = self.patches[0].attributes
-        self.nodes = []
 
         # assuming all attrs use same view
         view_id = self.first_patch_attrs[0]["view"] 
@@ -645,8 +659,7 @@ class GeometryDelegate(Delegate):
 
 
     def on_remove(self, message: Message):
-
-        self.client.callback_queue.put((self.remove_from_render, []))
+        pass
 
 
 class LightDelegate(Delegate):
@@ -754,8 +767,8 @@ class BufferDelegate(Delegate):
         if hasattr(message, "inline_bytes"):
             self.bytes = message.inline_bytes
         else:
-            print("URI Bytes Not Implemented Yet")
-            self.bytes = b'Uh oh'
+            # TODO
+            raise Exception("URI Bytes Not Implemented Yet")
 
 
 class BufferViewDelegate(Delegate):
