@@ -7,6 +7,8 @@ from urllib.parse import _NetlocResultMixinStr
 if TYPE_CHECKING:
     from penne.messages import Message
     from penne.core import Client
+import io
+import urllib.request
 
 from . import programs
 
@@ -14,7 +16,7 @@ from penne import Delegate, inject_methods, inject_signals
 import moderngl_window as mglw
 import moderngl
 import numpy as np
-
+from PIL import Image
 
 @dataclass
 class FormatInfo:
@@ -710,20 +712,35 @@ class ImageDelegate(Delegate):
     
     def on_new(self, message: Message):
         self.size = (0, 0)
-        self.components = 1
+        self.components = None
+        self.bytes = None
+
+        component_map = {
+            "RGB": 3,
+            "RGBA": 4
+        }
+
         if hasattr(message, "buffer_source"):
             buffer = self.client.get_component("bufferviews", message.buffer_source).buffer
-            self.bytes = buffer.bytes
+            im = Image.open(io.BytesIO(buffer.bytes))
+            self.size = im.size
+            self.components = component_map[im.mode]
+            self.bytes = im.tobytes() 
+            # Seems sketch... plain buffer.bytes wasn't working - data size mismatch
+            # bytes -> image -> new bytes?
+            
         else:
-            print("URI source not implemented for images")
-            self.bytes = b'Uh Oh'
+            raise Exception("URI Bytes not yet implemented!")
 
 
 class TextureDelegate(Delegate):
 
+    # How to get size (width / height) and components from image
+    #   jpg, png, ktx, image decoder - magic in first couple bytes
+    #   components from decoder - 3/4
     def set_up_texture(self, window):
         image = self.client.get_component("images", self.info.image)
-        self.mglw_texture = window.ctx.texture(image.size, image.components, image.bytes) # Need size (width, height), components, data - bytes,
+        self.mglw_texture = window.ctx.texture(image.size, image.components, image.bytes)
 
     def set_up_sampler(self, window):
         if hasattr(self.info, "sampler"):
@@ -766,9 +783,15 @@ class BufferDelegate(Delegate):
 
         if hasattr(message, "inline_bytes"):
             self.bytes = message.inline_bytes
-        else:
+        elif hasattr(message, "uri_bytes"):
             # TODO
-            raise Exception("URI Bytes Not Implemented Yet")
+            #raise Exception("URI Bytes Not Implemented Yet")
+            # Client isn't translating uri correctly with cbor tag
+            with urllib.request.urlopen(message.uri_bytes) as response:
+                self.bytes = response.read()
+        
+        else:
+            raise Exception("Malformed Buffer Message")
 
 
 class BufferViewDelegate(Delegate):
