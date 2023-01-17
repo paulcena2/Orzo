@@ -37,10 +37,27 @@ class BaseProgram(MeshProgram):
         self.program["m_model"].write(model_matrix)
         self.program["m_cam"].write(camera_matrix)
 
+        # Only invert matrix / calculate camera position if camera is moved
+        if list(camera_matrix) != PhongProgram.current_camera_matrix:
+            PhongProgram.current_camera_matrix = list(camera_matrix)
+            camera_world = np.linalg.inv(camera_matrix).m4
+            PhongProgram.camera_position = tuple(camera_world[:3])
+        self.program["camera_position"].value = PhongProgram.camera_position
+
+        # Feed Material in if present
         if mesh.material:
             self.program["material_color"].value = tuple(mesh.material.color)
+            mesh.material.mat_texture.texture.use()
         else:
             self.program["material_color"].value = (1.0, 1.0, 1.0, 1.0)
+
+        # Set light values
+        lights = mesh.lights.values()
+        num_lights = len(lights)
+        self.program["num_lights"].value = num_lights
+        for i, light in zip(range(num_lights), lights):
+            for attr, val in light.items():
+                self.program[f"lights[{i}].{attr}"].value = val
 
         mesh.vao.render(self.program)
     
@@ -90,10 +107,13 @@ class PhongProgram(MeshProgram):
         self.program["camera_position"].value = PhongProgram.camera_position
         #print(f"Camera Position: {PhongProgram.camera_position}")
 
+        # Feed Material in if present
         if mesh.material:
             self.program["material_color"].value = tuple(mesh.material.color)
         else:
             self.program["material_color"].value = (1.0, 1.0, 1.0, 1.0)
+
+        # Textures eventually...
 
         lights = mesh.lights.values()
         num_lights = len(lights)

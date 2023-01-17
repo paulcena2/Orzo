@@ -75,8 +75,7 @@ void main() {
         vec3 ambient = light.ambient;
         
         // Get diffuse color
-        vec4 ccc = material_color;
-        vec4 diffuseColor = color;
+        vec4 diffuseColor = material_color * color;
         f_color += diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular;
         i += 1;
     } 

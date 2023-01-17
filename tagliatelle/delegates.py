@@ -529,6 +529,13 @@ class PlotDelegate(Delegate):
 class MaterialDelegate(Delegate):
     """Delegate representing a Noodles Material"""
     
+    def set_up_texture(self, window):
+        """Set up texture for base color if applicable"""
+        
+        texture = self.client.get_component("textures", self.info.pbr_info.base_color_texture.texture)
+        self.mglw_material.mat_texture = mglw.scene.MaterialTexture(texture.mglw_texture, texture.mglw_sampler)
+
+
     def on_new(self, message: Message):
         """"Create mglw_material from noodles message"""
 
@@ -537,11 +544,10 @@ class MaterialDelegate(Delegate):
         material = mglw.scene.Material(f"{self.name}")
         material.color = message.pbr_info.base_color
 
-        # For now, use default texture
-        # if hasattr(message, "normal_texture"):
-        #     texture = self.client.get_component("textures", message.normal_texture.texture)
-        #     material.mat_texture = mglw.scene.MaterialTexture(texture.mglw_texture, texture.mglw_sampler)
-    
+        # For now only worrying about base_color_texture, need to delay in queue to allow for other setup - better solution?
+        if hasattr(message.pbr_info, "base_color_texture"):
+            self.client.callback_queue.put((self.set_up_texture, []))
+            
         material.double_sided = False if not hasattr(message, "double_sided") else message.double_sided
         self.mglw_material = material
 
@@ -608,7 +614,7 @@ class GeometryDelegate(Delegate):
         if "TEXTURE" not in new_attributes:
             default_texture_coords = [0.0, 0.0] * patch['vertex_count']
             buffer_data = np.array(default_texture_coords, np.single)
-            vao.buffer(buffer_data, '2f', 'in_color')
+            vao.buffer(buffer_data, '2f', 'in_texture')
     
         # Create Mesh and add lights
         mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material.mglw_material, attributes=new_attributes)
@@ -784,9 +790,7 @@ class BufferDelegate(Delegate):
         if hasattr(message, "inline_bytes"):
             self.bytes = message.inline_bytes
         elif hasattr(message, "uri_bytes"):
-            # TODO
-            #raise Exception("URI Bytes Not Implemented Yet")
-            # Client isn't translating uri correctly with cbor tag
+            
             with urllib.request.urlopen(message.uri_bytes) as response:
                 self.bytes = response.read()
         
