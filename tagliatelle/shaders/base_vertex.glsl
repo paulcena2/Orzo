@@ -15,10 +15,12 @@ uniform mat4 m_model;
 uniform mat4 m_cam;
 
 void main() {
-    gl_Position = m_proj * m_cam * m_model * vec4(in_position, 1.0);
+    vec4 local_position = vec4(in_position, 1.0);
+    gl_Position = m_proj * m_cam * m_model * local_position;
     
-    color = vec4(1.0, 1.0, 1.0, 1.0);
-    normal = in_normal;
-    world_position = gl_Position.xyz;
+    mat3 normal_matrix = mat3(m_model);
+    normal = normalize(normal_matrix * in_normal);
+    color = in_color;
+    world_position = (m_model * local_position).xyz;
     texcoord = in_texture;
 }
