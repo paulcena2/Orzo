@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+import moderngl
 from moderngl_window.scene import MeshProgram
 
 current_dir = os.path.dirname(__file__)
@@ -47,6 +48,7 @@ class BaseProgram(MeshProgram):
         # Feed Material in if present
         if mesh.material:
             self.program["material_color"].value = tuple(mesh.material.color)
+            self.program["double_sided"].value = mesh.material.double_sided
             mesh.material.mat_texture.texture.use()
         else:
             self.program["material_color"].value = (1.0, 1.0, 1.0, 1.0)
@@ -58,6 +60,12 @@ class BaseProgram(MeshProgram):
         for i, light in zip(range(num_lights), lights):
             for attr, val in light.items():
                 self.program[f"lights[{i}].{attr}"].value = val
+
+        # Hack to change culling for double_sided material
+        if mesh.material.double_sided:
+            mesh.vao.ctx.disable(moderngl.CULL_FACE)
+        else:
+            mesh.vao.ctx.enable(moderngl.CULL_FACE)
 
         mesh.vao.render(self.program)
     

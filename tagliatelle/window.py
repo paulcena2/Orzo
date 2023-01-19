@@ -16,6 +16,7 @@ class Window(mglw.WindowConfig):
     title = "Tagliatelle Window"
     resizable = True
     client = None
+    # MATCH SCREEN RATE
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

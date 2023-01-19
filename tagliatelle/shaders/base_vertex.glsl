@@ -20,7 +20,8 @@ void main() {
     
     mat3 normal_matrix = mat3(m_model);
     normal = normalize(normal_matrix * in_normal);
+    //flipped_normal = normalize(normal_matrix * -in_normal);
     color = in_color;
     world_position = (m_model * local_position).xyz;
-    texcoord = in_texture;
+    texcoord = in_texture / 65,535;
 }

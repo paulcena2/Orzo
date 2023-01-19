@@ -533,7 +533,11 @@ class MaterialDelegate(Delegate):
         """Set up texture for base color if applicable"""
         
         texture = self.client.get_component("textures", self.info.pbr_info.base_color_texture.texture)
-        self.mglw_material.mat_texture = mglw.scene.MaterialTexture(texture.mglw_texture, texture.mglw_sampler)
+        mglw_texture = texture.mglw_texture
+        mglw_sampler = texture.sampler.mglw_sampler
+        mglw_sampler.texture = mglw_texture
+
+        self.mglw_material.mat_texture = mglw.scene.MaterialTexture(mglw_texture, mglw_sampler)
 
 
     def on_new(self, message: Message):
@@ -597,6 +601,7 @@ class GeometryDelegate(Delegate):
         buffer_format = self.construct_format_str(noodle_attributes)
         vao = mglw.opengl.vao.VAO(name=f"{self.name} Patch VAO", mode=MODE_MAP[patch['type']])
         vao.buffer(buffer.bytes[:index_offset], buffer_format, [info["name"] for info in new_attributes.values()])
+        
         index_bytes, index_size = buffer.bytes[index_offset:], FORMAT_MAP[patch.indices["format"]].size
         vao.index_buffer(index_bytes, index_size)
 
@@ -729,14 +734,18 @@ class ImageDelegate(Delegate):
         if hasattr(message, "buffer_source"):
             buffer = self.client.get_component("bufferviews", message.buffer_source).buffer
             im = Image.open(io.BytesIO(buffer.bytes))
+            im = im.transpose(Image.FLIP_LEFT_RIGHT)
             self.size = im.size
             self.components = component_map[im.mode]
+            #self.bytes = buffer.bytes
             self.bytes = im.tobytes() 
+            im.show()
             # Seems sketch... plain buffer.bytes wasn't working - data size mismatch
             # bytes -> image -> new bytes?
             
         else:
-            raise Exception("URI Bytes not yet implemented!")
+            with urllib.request.urlopen(message.uri_bytes) as response:
+                self.bytes = response.read()
 
 
 class TextureDelegate(Delegate):
@@ -747,18 +756,16 @@ class TextureDelegate(Delegate):
     def set_up_texture(self, window):
         image = self.client.get_component("images", self.info.image)
         self.mglw_texture = window.ctx.texture(image.size, image.components, image.bytes)
-
-    def set_up_sampler(self, window):
-        if hasattr(self.info, "sampler"):
-            sampler = self.client.get_component("samplers", self.info.sampler)
-            self.mglw_sampler = sampler.mglw_sampler
-        else:
-            self.mglw_sampler = window.ctx.sampler(texture=self.mglw_texture)
+        # Specify dType??        
     
     def on_new(self, message: Message):
-        self.mglw_texture = None        
+        self.mglw_texture = None
+        self.sampler = None
+
         self.client.callback_queue.put((self.set_up_texture, []))
-        self.client.callback_queue.put((self.set_up_sampler, []))
+        
+        if hasattr(self.info, "sampler"):
+            self.sampler = self.client.get_component("samplers", self.info.sampler)
         
 
 class SamplerDelegate(Delegate):
@@ -769,12 +776,26 @@ class SamplerDelegate(Delegate):
         "LINEAR_MIPMAP_LINEAR": moderngl.LINEAR_MIPMAP_LINEAR 
     }
 
+    SAMPLER_MODE_MAP = {
+        "CLAMP_TO_EDGE": False,
+        "REPEAT": True,
+        "MIRRORED_REPEAT": True # This is off but mglw only allows for boolean
+    }
+
     def set_up_sampler(self, window):
 
-        # yet to include wrap_s, wrap_t, -> repeat_x repeat_y in moderngl?
         min_filter = self.FILTER_MAP[self.info.min_filter] if hasattr(self.info, "min_filter") else moderngl.LINEAR_MIPMAP_LINEAR
         mag_filter = self.FILTER_MAP[self.info.mag_filter] if hasattr(self.info, "mag_filter") else moderngl.LINEAR
-        self.mglw_sampler = window.ctx.sampler(filter=(min_filter, mag_filter))
+        
+        rep_x = self.SAMPLER_MODE_MAP[self.info.wrap_s] if hasattr(self.info, "wrap_s") else True
+        rep_y = self.SAMPLER_MODE_MAP[self.info.wrap_t] if hasattr(self.info, "wrap_t") else True
+        
+        self.mglw_sampler = window.ctx.sampler(
+            filter=(min_filter, mag_filter), 
+            repeat_x=rep_x, 
+            repeat_y=rep_y,
+            repeat_z=False
+        )
     
     def on_new(self, message: Message):
         self.mglw_sampler = None
