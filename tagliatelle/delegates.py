@@ -526,36 +526,6 @@ class PlotDelegate(Delegate):
     pass
 
 
-class MaterialDelegate(Delegate):
-    """Delegate representing a Noodles Material"""
-    
-    def set_up_texture(self, window):
-        """Set up texture for base color if applicable"""
-        
-        texture = self.client.get_component("textures", self.info.pbr_info.base_color_texture.texture)
-        mglw_texture = texture.mglw_texture
-        mglw_sampler = texture.sampler.mglw_sampler
-        mglw_sampler.texture = mglw_texture
-
-        self.mglw_material.mat_texture = mglw.scene.MaterialTexture(mglw_texture, mglw_sampler)
-
-
-    def on_new(self, message: Message):
-        """"Create mglw_material from noodles message"""
-
-        self.name = "No-Name Material" if not hasattr(message, "name") else message.name
-
-        material = mglw.scene.Material(f"{self.name}")
-        material.color = message.pbr_info.base_color
-
-        # For now only worrying about base_color_texture, need to delay in queue to allow for other setup - better solution?
-        if hasattr(message.pbr_info, "base_color_texture"):
-            self.client.callback_queue.put((self.set_up_texture, []))
-            
-        material.double_sided = False if not hasattr(message, "double_sided") else message.double_sided
-        self.mglw_material = material
-
-
 class GeometryDelegate(Delegate):
 
     def reformat_attr(self, attr: dict):
@@ -719,6 +689,43 @@ class LightDelegate(Delegate):
         }
 
 
+class MaterialDelegate(Delegate):
+    """Delegate representing a Noodles Material"""
+    
+    def set_up_texture(self, window):
+        """Set up texture for base color if applicable"""
+        
+        # Get texture
+        texture = self.client.get_component("textures", self.info.pbr_info.base_color_texture.texture)
+        mglw_texture = texture.mglw_texture
+
+        # Hook texture up to sampler
+        mglw_sampler = texture.sampler.mglw_sampler
+        mglw_sampler.texture = mglw_texture
+
+        # Make sure wrapping flags match
+        mglw_texture.repeat_x = mglw_sampler.repeat_x
+        mglw_texture.repeat_y = mglw_sampler.repeat_y
+
+        self.mglw_material.mat_texture = mglw.scene.MaterialTexture(mglw_texture, mglw_sampler)
+
+
+    def on_new(self, message: Message):
+        """"Create mglw_material from noodles message"""
+
+        self.name = "No-Name Material" if not hasattr(message, "name") else message.name
+
+        material = mglw.scene.Material(f"{self.name}")
+        material.color = message.pbr_info.base_color
+
+        # For now only worrying about base_color_texture, need to delay in queue to allow for other setup - better solution?
+        if hasattr(message.pbr_info, "base_color_texture"):
+            self.client.callback_queue.put((self.set_up_texture, []))
+            
+        material.double_sided = False if not hasattr(message, "double_sided") else message.double_sided
+        self.mglw_material = material
+
+
 class ImageDelegate(Delegate):
     
     def on_new(self, message: Message):
@@ -734,14 +741,14 @@ class ImageDelegate(Delegate):
         if hasattr(message, "buffer_source"):
             buffer = self.client.get_component("bufferviews", message.buffer_source).buffer
             im = Image.open(io.BytesIO(buffer.bytes))
-            im = im.transpose(Image.FLIP_LEFT_RIGHT)
+            #im = Image.frombytes()
+            #im = im.transpose(Image.FLIP_LEFT_RIGHT)
+            im = im.transpose(Image.FLIP_TOP_BOTTOM)
             self.size = im.size
             self.components = component_map[im.mode]
             #self.bytes = buffer.bytes
             self.bytes = im.tobytes() 
-            im.show()
-            # Seems sketch... plain buffer.bytes wasn't working - data size mismatch
-            # bytes -> image -> new bytes?
+            #im.show()
             
         else:
             with urllib.request.urlopen(message.uri_bytes) as response:
@@ -756,7 +763,7 @@ class TextureDelegate(Delegate):
     def set_up_texture(self, window):
         image = self.client.get_component("images", self.info.image)
         self.mglw_texture = window.ctx.texture(image.size, image.components, image.bytes)
-        # Specify dType??        
+        
     
     def on_new(self, message: Message):
         self.mglw_texture = None

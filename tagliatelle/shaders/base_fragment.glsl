@@ -42,6 +42,7 @@ void main() {
 
         // Correct normal if double sided
         if (double_sided && (dot(N, V) < 0))
+            bool flipped = true;
             N = -N;
         
         float falloff = 0.0;
@@ -83,8 +84,8 @@ void main() {
         // Get diffuse color
         vec4 tex_color = vec4(texture(base_texture, texcoord));
         vec4 diffuseColor = material_color * color * tex_color;
-        vec4 xxx = material_color;
-        //vec4 diffuseColor = tex_color;
+
+        // Add contribution to final color
         f_color += diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular;
         i += 1;
     }

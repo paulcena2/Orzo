@@ -11,6 +11,8 @@ class BaseProgram(MeshProgram):
     """
     Default Program
     """
+    current_camera_matrix = None
+    camera_position = None
 
     def __init__(self, ctx, **kwargs):
         super().__init__(program=None)
@@ -39,11 +41,11 @@ class BaseProgram(MeshProgram):
         self.program["m_cam"].write(camera_matrix)
 
         # Only invert matrix / calculate camera position if camera is moved
-        if list(camera_matrix) != PhongProgram.current_camera_matrix:
-            PhongProgram.current_camera_matrix = list(camera_matrix)
-            camera_world = np.linalg.inv(camera_matrix).m4
-            PhongProgram.camera_position = tuple(camera_world[:3])
-        self.program["camera_position"].value = PhongProgram.camera_position
+        if list(camera_matrix) != BaseProgram.current_camera_matrix:
+            camera_world = np.linalg.inv(camera_matrix)          
+            BaseProgram.current_camera_matrix = list(camera_matrix)
+            BaseProgram.camera_position = tuple(camera_world.m4[:3])
+        self.program["camera_position"].value = BaseProgram.camera_position
 
         # Feed Material in if present
         if mesh.material:
@@ -68,6 +70,7 @@ class BaseProgram(MeshProgram):
             mesh.vao.ctx.enable(moderngl.CULL_FACE)
 
         mesh.vao.render(self.program)
+    
     
     def apply(self, mesh):
         return self
@@ -109,9 +112,9 @@ class PhongProgram(MeshProgram):
 
         # Only invert matrix / calculate camera position if camera is moved
         if list(camera_matrix) != PhongProgram.current_camera_matrix:
+            camera_world = np.linalg.inv(camera_matrix)          
             PhongProgram.current_camera_matrix = list(camera_matrix)
-            camera_world = np.linalg.inv(camera_matrix).m4
-            PhongProgram.camera_position = tuple(camera_world[:3])
+            PhongProgram.camera_position = tuple(camera_world.m4[:3])
         self.program["camera_position"].value = PhongProgram.camera_position
         #print(f"Camera Position: {PhongProgram.camera_position}")
 
