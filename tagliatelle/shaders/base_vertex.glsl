@@ -9,10 +9,13 @@ out vec4 color;
 out vec3 normal;
 out vec3 world_position;
 out vec2 texcoord;
+out vec3 view_vector;
 
 uniform mat4 m_proj;
 uniform mat4 m_model;
 uniform mat4 m_cam;
+uniform vec3 camera_position;
+
 
 void main() {
     vec4 local_position = vec4(in_position, 1.0);
@@ -22,6 +25,7 @@ void main() {
     normal = normalize(normal_matrix * in_normal);
     color = in_color;
     world_position = (m_model * local_position).xyz;
+    view_vector = camera_position - world_position;
 
     //Normalize coordinates -> (0, 1)
     texcoord = in_texture / 65535;

@@ -62,6 +62,8 @@ class BaseProgram(MeshProgram):
         for i, light in zip(range(num_lights), lights):
             for attr, val in light.items():
                 self.program[f"lights[{i}].{attr}"].value = val
+        # print(f"Light Positions: {[light.get('world_position') for light in lights]}")
+        # print(f"Camera Position: {BaseProgram.camera_position}")
 
         # Hack to change culling for double_sided material
         if mesh.material.double_sided:
@@ -71,7 +73,7 @@ class BaseProgram(MeshProgram):
 
         mesh.vao.render(self.program)
     
-    
+
     def apply(self, mesh):
         return self
 

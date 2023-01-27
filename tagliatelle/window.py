@@ -1,8 +1,10 @@
 import moderngl_window as mglw
+from moderngl_window.conf import settings
 import moderngl
 import numpy as np
 from pathlib import Path
 import queue
+
 
 class Window(mglw.WindowConfig):
     """Base Window with built in 3D camera support    
@@ -20,7 +22,11 @@ class Window(mglw.WindowConfig):
     # MATCH SCREEN RATE
 
     def __init__(self, **kwargs):
+        #settings.WINDOW['class'] = 'moderngl_window.context.pyqt5.window'
         super().__init__(**kwargs)
+        
+        # self.wnd = mglw.create_window_from_settings()
+        # self.ctx = self.wnd.ctx
 
         # Set Up Camera
         self.camera = mglw.scene.camera.KeyboardCamera(self.wnd.keys, aspect_ratio=self.wnd.aspect_ratio)
