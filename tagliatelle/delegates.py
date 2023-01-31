@@ -546,10 +546,16 @@ class GeometryDelegate(Delegate):
         """
 
         formats = []
+        norm_factor = None
         for attr in attributes:
             format_info = FORMAT_MAP[attr["format"]]
             formats.append(f"{format_info.num_components}{format_info.format}")
-        return " ".join(formats)
+            
+            # If texture, calculate number to divide by in vertex shader
+            if attr["semantic"] == "TEXTURE":
+                norm_factor = (2 ** (format_info.size * 8)) - 1
+
+        return " ".join(formats), norm_factor
 
 
     def render_patch(self, patch, instances, window):
@@ -568,7 +574,7 @@ class GeometryDelegate(Delegate):
         view = self.buffer_view
         buffer = view.buffer
         index_offset = patch.indices["offset"] 
-        buffer_format = self.construct_format_str(noodle_attributes)
+        buffer_format, norm_factor = self.construct_format_str(noodle_attributes)
         vao = mglw.opengl.vao.VAO(name=f"{self.name} Patch VAO", mode=MODE_MAP[patch['type']])
         vao.buffer(buffer.bytes[:index_offset], buffer_format, [info["name"] for info in new_attributes.values()])
         
@@ -590,11 +596,13 @@ class GeometryDelegate(Delegate):
             default_texture_coords = [0.0, 0.0] * patch['vertex_count']
             buffer_data = np.array(default_texture_coords, np.single)
             vao.buffer(buffer_data, '2f', 'in_texture')
+            norm_factor = (2 ** (FORMAT_MAP["VEC2"].size * 8)) - 1
     
         # Create Mesh and add lights
         mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material.mglw_material, attributes=new_attributes)
         mesh.lights = window.lights
         mesh.num_lights = window.num_lights
+        mesh.norm_factor = norm_factor
         
         # Add instances to vao if applicable, also add appropriate mesh program
         if instances:

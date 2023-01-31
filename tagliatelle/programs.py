@@ -39,6 +39,7 @@ class BaseProgram(MeshProgram):
         self.program["m_proj"].write(projection_matrix)
         self.program["m_model"].write(model_matrix)
         self.program["m_cam"].write(camera_matrix)
+        self.program["normalization_factor"].value = mesh.norm_factor
 
         # Only invert matrix / calculate camera position if camera is moved
         if list(camera_matrix) != BaseProgram.current_camera_matrix:
@@ -54,6 +55,7 @@ class BaseProgram(MeshProgram):
             mesh.material.mat_texture.texture.use()
         else:
             self.program["material_color"].value = (1.0, 1.0, 1.0, 1.0)
+            self.program["double_sided"].value = False
 
         # Set light values
         lights = mesh.lights.values()

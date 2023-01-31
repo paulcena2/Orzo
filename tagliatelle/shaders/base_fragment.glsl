@@ -71,11 +71,6 @@ void main() {
         // Computer diffuse
         vec4 diffuse = light.color * max(0.0, dot(L, N)) * falloff; // using lambertian attenuation
 
-        // if (dot(N, V) > 0)
-        //     diffuse = vec4(0,1,0,1);
-        // else
-        //     diffuse = vec4(1,0,0,1);
-
         // Compute Specular
         float shininess = 25.0;
         float specularStrength = 0.4;
