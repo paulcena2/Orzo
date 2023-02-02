@@ -5,6 +5,43 @@ import numpy as np
 from pathlib import Path
 import queue
 
+import imgui
+from imgui.integrations.pyglet import PygletRenderer
+import pyglet
+
+
+class GUI:
+
+    def __init__(self, window):
+        
+        imgui.create_context()
+
+        pyglet_wnd = window.wnd._window
+        self.renderer = PygletRenderer(pyglet_wnd)
+
+        imgui.get_io().display_size = 100, 100
+        imgui.get_io().fonts.get_tex_data_as_rgba32()
+        
+        # imgui.new_frame()  
+        # imgui.end_frame()
+
+        # Window variables
+        self.test_input = 0
+
+    def render(self):
+        
+       
+        imgui.new_frame()
+
+        imgui.begin("Test Window")
+        imgui.text("This is the test window.")
+        changed, self.test_input = imgui.input_int("Integer Input Test", self.test_input)
+
+        imgui.end()
+
+        self.renderer.render(imgui.get_draw_data())
+        imgui.end_frame()
+
 
 class Window(mglw.WindowConfig):
     """Base Window with built in 3D camera support    
@@ -50,6 +87,17 @@ class Window(mglw.WindowConfig):
         self.scene.root_nodes.append(root)
         self.scene.cameras.append(self.camera)
 
+        # Set up GUI
+        #self.GUI = GUI(self)
+        window = self.wnd._window
+        self.batch = pyglet.graphics.Batch()
+        pyglet.text.Label('Hello, world', font_name='Times New Roman',
+                          font_size=36,
+                          x=window.width//2, y=window.height//2,
+                          anchor_x='center', anchor_y='center', batch=self.batch)
+
+        pyglet.gui.TextEntry(text="Enter", x=0, y=window.height//2, width=200, text_color=(255,255,255,255), batch=self.batch, )
+
     def key_event(self, key, action, modifiers):
 
         keys = self.wnd.keys
@@ -57,11 +105,11 @@ class Window(mglw.WindowConfig):
             self.camera.key_input(key, action, modifiers)
 
         if action == keys.ACTION_PRESS:
-            if key == keys.C:
+            if key == keys.C or key == keys.SPACE:
                 self.camera_enabled = not self.camera_enabled
                 self.wnd.mouse_exclusivity = self.camera_enabled
                 self.wnd.cursor = not self.camera_enabled
-            if key == keys.SPACE:
+            if key == keys.P:
                 self.timer.toggle_pause()
 
     def mouse_position_event(self, x: int, y: int, dx, dy):
@@ -87,6 +135,9 @@ class Window(mglw.WindowConfig):
             camera_matrix=self.camera.matrix,
             time=time,
         )
+
+        # Render GUI elements
+        self.batch.draw()
 
         try:
             callback_info = Window.client.callback_queue.get(block=False)
