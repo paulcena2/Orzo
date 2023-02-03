@@ -626,7 +626,7 @@ class GeometryDelegate(Delegate):
             # print(f"Instance rendering rotations: \n{rotations}")
 
         else:
-            mesh.mesh_program = programs.BaseProgram(window.ctx)
+            mesh.mesh_program = programs.PhongProgram(window.ctx, num_instances=-1)
         
         # Add mesh as new node to scene graph
         scene.meshes.append(mesh)
