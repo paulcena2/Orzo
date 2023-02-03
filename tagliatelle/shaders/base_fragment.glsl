@@ -26,7 +26,6 @@ out vec4 f_color;
 void main() {
 
     f_color = vec4(0.0, 0.0, 0.0, 1.0);
-    int i = 0;
 
     vec3 V = normalize(view_vector);
     vec3 N = normalize(normal);
@@ -35,6 +34,7 @@ void main() {
     if (double_sided && dot(view_vector, normal) < 0)
         N = -N;
 
+    int i = 0;
     while (i < num_lights){
         
         LightInfo light = lights[i];
@@ -87,7 +87,6 @@ void main() {
 
         // Add contribution to final color
         f_color += diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular;
-        // f_color += diffuseColor * (diffuse + vec4(ambient, 1.0));
         i += 1;
     }
 }

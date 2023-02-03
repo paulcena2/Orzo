@@ -1,5 +1,4 @@
 #version 330
-//#extension GL_OES_standard_derivatives : enable
 
 struct LightInfo {
     vec3 world_position;
@@ -13,17 +12,29 @@ struct LightInfo {
 in vec3 world_position;
 in vec3 normal;
 in vec4 color;
+in vec2 texcoord;
+in vec3 view_vector;
 
 uniform int num_lights;
 uniform LightInfo lights[8];
 uniform vec4 material_color;
-uniform vec3 camera_position;
+uniform sampler2D base_texture;
+uniform bool double_sided;
 
 out vec4 f_color;
 
 void main() {
 
     f_color = vec4(0.0, 0.0, 0.0, 1.0);
+    vec4 tex_color = vec4(texture(base_texture, texcoord));
+
+    vec3 V = normalize(view_vector);
+    vec3 N = normalize(normal);
+
+    // Correct Normal if double sided and needs to be flipped
+    if (double_sided && dot(view_vector, normal) < 0)
+        N = -N;
+
     int i = 0;
     while (i < num_lights){
         
@@ -33,16 +44,13 @@ void main() {
 
         vec3 lightVector = light.world_position - world_position;
         float lightDistance = length(lightVector);
-        
         vec3 L = normalize(lightVector);
-        vec3 V = normalize(camera_position - world_position);
-        vec3 N = normalize(normal);
         
         float falloff = 0.0;
+        
         // Point Light
         if (light.type == 0)
             falloff = 1 / (1 + lightDistance * lightDistance);
-            //falloff = 5;
 
         // Spot Light
         else if (light.type == 1) {
@@ -59,14 +67,14 @@ void main() {
 
         // Directional Light
         else
-            falloff = 1.0;
+            falloff = 1;
         
         // Computer diffuse
         vec4 diffuse = light.color * max(0.0, dot(L, N)) * falloff; // using lambertian attenuation
 
         // Compute Specular
-        float shininess = 15.0;
-        float specularStrength = 0.5;
+        float shininess = 25.0;
+        float specularStrength = 0.4;
         vec3 reflection = -reflect(L, N);
         float specularPower = pow(max(0.0, dot(V, reflection)), shininess);
         float specular = specularStrength * specularPower * falloff;
@@ -74,9 +82,11 @@ void main() {
         // Get Ambient
         vec3 ambient = light.ambient;
         
-        // Get diffuse color
-        vec4 diffuseColor = material_color * color;
+        // Get diffuse color - tex_color is the issue -> black instead of white
+        vec4 diffuseColor = material_color * color * tex_color;
+
+        // Add contribution to final color
         f_color += diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular;
         i += 1;
-    } 
+    }
 }

@@ -2,7 +2,10 @@ import os
 
 import numpy as np
 import moderngl
+import moderngl_window as mglw
+
 from moderngl_window.scene import MeshProgram
+from PIL import Image
 
 current_dir = os.path.dirname(__file__)
 
@@ -101,6 +104,13 @@ class PhongProgram(MeshProgram):
 
         self.program = ctx.program(vertex_shader=vertex, fragment_shader=fragment)
 
+        # Set up default texture
+        img = Image.open(os.path.join(current_dir, "resources/default.png"))
+        texture = ctx.texture(img.size, 4, img.tobytes())
+        texture.repeat_x, texture.repeat_y = False, False
+        self.default_texture = texture
+
+        
     def draw(
         self,
         mesh,
@@ -113,6 +123,7 @@ class PhongProgram(MeshProgram):
         self.program["m_proj"].write(projection_matrix)
         self.program["m_model"].write(model_matrix)
         self.program["m_cam"].write(camera_matrix)
+        self.program["normalization_factor"].value = mesh.norm_factor
 
         # Only invert matrix / calculate camera position if camera is moved
         if list(camera_matrix) != PhongProgram.current_camera_matrix:
@@ -120,27 +131,37 @@ class PhongProgram(MeshProgram):
             PhongProgram.current_camera_matrix = list(camera_matrix)
             PhongProgram.camera_position = tuple(camera_world.m4[:3])
         self.program["camera_position"].value = PhongProgram.camera_position
-        #print(f"Camera Position: {PhongProgram.camera_position}")
 
         # Feed Material in if present
         if mesh.material:
             self.program["material_color"].value = tuple(mesh.material.color)
+            self.program["double_sided"].value = mesh.material.double_sided
+            if mesh.material.mat_texture:
+                mesh.material.mat_texture.texture.use()
+            else:
+                self.default_texture.use()
         else:
             self.program["material_color"].value = (1.0, 1.0, 1.0, 1.0)
+            self.program["double_sided"].value = False
+            self.default_texture.use()
 
-        # Textures eventually...
-
+        # Set light values
         lights = mesh.lights.values()
         num_lights = len(lights)
         self.program["num_lights"].value = num_lights
-
-        # Set light values - better way to pass dict directly?
         for i, light in zip(range(num_lights), lights):
             for attr, val in light.items():
                 self.program[f"lights[{i}].{attr}"].value = val
-        #print(f"Light Positions: {[light.get("world_position") for light in lights]}")
- 
-        mesh.vao.render(self.program, instances = self.num_instances)
+        # print(f"Light Positions: {[light.get('world_position') for light in lights]}")
+        # print(f"Camera Position: {BaseProgram.camera_position}")
+
+        # Hack to change culling for double_sided material
+        if mesh.material.double_sided:
+            mesh.vao.ctx.disable(moderngl.CULL_FACE)
+        else:
+            mesh.vao.ctx.enable(moderngl.CULL_FACE)
+
+        mesh.vao.render(self.program, instances=self.num_instances)
     
     def apply(self, mesh):
         return self

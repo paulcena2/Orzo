@@ -1,8 +1,7 @@
 #version 330
 
-in vec3 in_position;
 in mat4 instance_matrix;
-
+in vec3 in_position;
 in vec3 in_normal;
 in vec2 in_texture;
 in vec4 in_color;
@@ -10,10 +9,14 @@ in vec4 in_color;
 uniform mat4 m_proj;
 uniform mat4 m_model;
 uniform mat4 m_cam;
+uniform vec3 camera_position;
+uniform float normalization_factor;
 
 out vec4 color;
 out vec3 normal;
 out vec3 world_position;
+out vec2 texcoord;
+out vec3 view_vector;
 
 void main() {
 
@@ -34,4 +37,6 @@ void main() {
     normal = normalize(normal_matrix * rotation_matrix * in_normal);
     color = in_color * instance_matrix[1];
     world_position = (m_model * local_position).xyz;
+    texcoord = in_texture / normalization_factor;
+    view_vector = camera_position - world_position;
 }
