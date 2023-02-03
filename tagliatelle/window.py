@@ -6,41 +6,32 @@ from pathlib import Path
 import queue
 
 import imgui
-from imgui.integrations.pyglet import PygletRenderer
+from imgui.integrations.pyglet import create_renderer
 import pyglet
 
+# class UI:
+#     def __init__(self, window):
+#         imgui.create_context()
+#         self.renderer = PygletRenderer(window)
+#         self.impl = PygletRenderer(window)
+#         imgui.new_frame()  
+#         imgui.end_frame()
 
-class GUI:
+#         # Window variables
+#         self.test_input = 0
 
-    def __init__(self, window):
-        
-        imgui.create_context()
+#     def render(self):
+#         imgui.render()
+#         self.impl.render(imgui.get_draw_data())
+#         imgui.new_frame()
 
-        pyglet_wnd = window.wnd._window
-        self.renderer = PygletRenderer(pyglet_wnd)
+#         imgui.begin("Test Window")
+#         imgui.text("This is the test window.")
+#         changed, self.test_input = imgui.input_int("Integer Input Test", self.test_input)
 
-        imgui.get_io().display_size = 100, 100
-        imgui.get_io().fonts.get_tex_data_as_rgba32()
-        
-        # imgui.new_frame()  
-        # imgui.end_frame()
+#         imgui.end()
 
-        # Window variables
-        self.test_input = 0
-
-    def render(self):
-        
-       
-        imgui.new_frame()
-
-        imgui.begin("Test Window")
-        imgui.text("This is the test window.")
-        changed, self.test_input = imgui.input_int("Integer Input Test", self.test_input)
-
-        imgui.end()
-
-        self.renderer.render(imgui.get_draw_data())
-        imgui.end_frame()
+#         imgui.end_frame()
 
 
 class Window(mglw.WindowConfig):
@@ -88,15 +79,18 @@ class Window(mglw.WindowConfig):
         self.scene.cameras.append(self.camera)
 
         # Set up GUI
-        #self.GUI = GUI(self)
-        window = self.wnd._window
-        self.batch = pyglet.graphics.Batch()
-        pyglet.text.Label('Hello, world', font_name='Times New Roman',
-                          font_size=36,
-                          x=window.width//2, y=window.height//2,
-                          anchor_x='center', anchor_y='center', batch=self.batch)
+        imgui.create_context()
+        self.impl = create_renderer(self.wnd._window)
 
-        pyglet.gui.TextEntry(text="Enter", x=0, y=window.height//2, width=200, text_color=(255,255,255,255), batch=self.batch, )
+        # Pyglet Gui
+        # window = self.wnd._window
+        # self.batch = pyglet.graphics.Batch()
+        # pyglet.text.Label('Hello, world', font_name='Times New Roman',
+        #                   font_size=36,
+        #                   x=window.width//2, y=window.height//2,
+        #                   anchor_x='center', anchor_y='center', batch=self.batch)
+
+        # pyglet.gui.TextEntry(text="Enter", x=0, y=window.height//2, width=200, text_color=(255,255,255,255), batch=self.batch, )
 
     def key_event(self, key, action, modifiers):
 
@@ -137,7 +131,10 @@ class Window(mglw.WindowConfig):
         )
 
         # Render GUI elements
-        self.batch.draw()
+        #self.batch.draw()
+        self.update_gui()
+        imgui.render()
+        self.impl.render(imgui.get_draw_data())
 
         try:
             callback_info = Window.client.callback_queue.get(block=False)
@@ -147,4 +144,22 @@ class Window(mglw.WindowConfig):
 
         except queue.Empty:
             pass
+
+
+    def update_gui(self):
+
+        imgui.new_frame()
+        if imgui.begin_main_menu_bar():
+            if imgui.begin_menu("File", True):
+
+                clicked_quit, selected_quit = imgui.menu_item(
+                    "Quit", 'Cmd+Q', False, True
+                )
+
+                if clicked_quit:
+                    exit(1)
+
+                imgui.end_menu()
+            imgui.end_main_menu_bar()
+
 
