@@ -4,34 +4,10 @@ import moderngl
 import numpy as np
 from pathlib import Path
 import queue
+import pyglet
 
 import imgui
 from imgui.integrations.pyglet import create_renderer
-import pyglet
-
-# class UI:
-#     def __init__(self, window):
-#         imgui.create_context()
-#         self.renderer = PygletRenderer(window)
-#         self.impl = PygletRenderer(window)
-#         imgui.new_frame()  
-#         imgui.end_frame()
-
-#         # Window variables
-#         self.test_input = 0
-
-#     def render(self):
-#         imgui.render()
-#         self.impl.render(imgui.get_draw_data())
-#         imgui.new_frame()
-
-#         imgui.begin("Test Window")
-#         imgui.text("This is the test window.")
-#         changed, self.test_input = imgui.input_int("Integer Input Test", self.test_input)
-
-#         imgui.end()
-
-#         imgui.end_frame()
 
 
 class Window(mglw.WindowConfig):
@@ -83,14 +59,14 @@ class Window(mglw.WindowConfig):
         self.impl = create_renderer(self.wnd._window)
 
         # Pyglet Gui
-        # window = self.wnd._window
-        # self.batch = pyglet.graphics.Batch()
-        # pyglet.text.Label('Hello, world', font_name='Times New Roman',
-        #                   font_size=36,
-        #                   x=window.width//2, y=window.height//2,
-        #                   anchor_x='center', anchor_y='center', batch=self.batch)
+        window = self.wnd._window
+        self.batch = pyglet.graphics.Batch()
+        default = pyglet.font.load(("Proggy Clean", "Times New Roman"), 13)
+        pyglet.text.Label("Press 'Space' to toggle camera/GUI", font_name=default,
+                          font_size=12,
+                          x=window.width-140, y=20,
+                          anchor_x='center', anchor_y='center', batch=self.batch)
 
-        # pyglet.gui.TextEntry(text="Enter", x=0, y=window.height//2, width=200, text_color=(255,255,255,255), batch=self.batch, )
 
     def key_event(self, key, action, modifiers):
 
@@ -131,7 +107,7 @@ class Window(mglw.WindowConfig):
         )
 
         # Render GUI elements
-        #self.batch.draw()
+        self.batch.draw()
         self.update_gui()
         imgui.render()
         self.impl.render(imgui.get_draw_data())
@@ -149,6 +125,9 @@ class Window(mglw.WindowConfig):
     def update_gui(self):
 
         imgui.new_frame()
+        state = self.client.state
+
+        # Main Menu
         if imgui.begin_main_menu_bar():
             if imgui.begin_menu("File", True):
 
@@ -157,9 +136,60 @@ class Window(mglw.WindowConfig):
                 )
 
                 if clicked_quit:
-                    exit(1)
+                    exit(1) # Need to hook this up to window
 
                 imgui.end_menu()
             imgui.end_main_menu_bar()
+
+        # State Inspector
+        imgui.begin("State")
+        for specifier in state:
+        
+            expanded, visible = imgui.collapsing_header(specifier, visible=True)
+
+            if expanded and specifier != "document":
+                for id, delegate in state[specifier].items():
+                    imgui.text(f"{id}: {delegate}")
+        imgui.end()
+
+        # Scene Info
+        imgui.begin("Scene Info")
+        imgui.text(f"Camera Position: {None}")
+        imgui.text(f"Light Positions: {None}")
+        imgui.end()
+
+        # Methods
+        imgui.begin("Methods")
+        for id, delegate in state["methods"].items():
+            imgui.begin_group()
+            
+            if imgui.button(f"Invoke {delegate.name}"):
+                if delegate.info.arg_doc == []:
+                    self.client.invoke_method(delegate.name, [])
+                else:
+                    imgui.open_popup(f"Invoke {id}")
+            imgui.text(f"Docs: {delegate.docs}")
+            imgui.separator()
+
+
+            if imgui.begin_popup(f"Invoke {id}"):
+
+                imgui.text("Input Arguments")
+                imgui.separator()
+                args = {}
+                for arg in delegate.info.arg_doc:
+                    imgui.text(arg.name.upper())
+                    changed, values = imgui.input_int4(f"({arg.editor_hint}", 1,1,1,1)
+                    args[arg.name] = values
+                    imgui.text(arg.doc)
+                    imgui.separator()
+                
+                if imgui.button("Submit"):
+                    print(f"Invoking the method: {delegate.name} w/ args: {args}")
+                    self.client.invoke_method(delegate.name, list(args.values()))
+                imgui.end_popup()
+            imgui.end_group()
+
+        imgui.end()
 
 

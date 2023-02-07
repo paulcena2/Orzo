@@ -78,8 +78,15 @@ class PhongProgram(MeshProgram):
             self.default_texture.use()
 
         # Set light values
-        lights = mesh.lights.values()
+        lights = list(mesh.lights.values())
         num_lights = len(lights)
+
+        # Trim lights down if exceeding max amount for buffer in shader
+        # - smarter way to get closer ones could be implemented
+        if num_lights > 8:
+            num_lights = 8
+            lights = lights[:8]
+
         self.program["num_lights"].value = num_lights
         for i, light in zip(range(num_lights), lights):
             for attr, val in light.items():

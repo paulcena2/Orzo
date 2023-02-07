@@ -70,6 +70,8 @@ class MethodDelegate(Delegate):
             "plots": "plot",
             "entities": "entity"
         }
+        self.name = message["name"]
+        self.docs = self.info.doc if hasattr(self.info, "doc") else "Not specified..."
 
     def on_new(self, message: Message):
         pass
@@ -95,8 +97,11 @@ class MethodDelegate(Delegate):
 
     def __repr__(self) -> str:
         """Custom string representation for methods"""
+
         
-        rep = f"{self.info.name}:\n\t{self.info.doc}\n\tReturns: {self.info.return_doc}\n\tArgs:"
+        returns = self.info.return_doc if hasattr(self.info, "return_doc") else "Not specified..."
+        
+        rep = f"{self.info.name}:\n\tDocs: {self.docs}\n\tReturns: {returns}\n\tArgs:"
         for arg in self.info.arg_doc:
             rep += f"\n\t\t{arg.name}: {arg.doc}"
         return rep
