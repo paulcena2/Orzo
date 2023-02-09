@@ -17,8 +17,10 @@ class PhongProgram(MeshProgram):
     current_camera_matrix = None
     camera_position = None
 
-    def __init__(self, ctx, num_instances, **kwargs):
+    def __init__(self, wnd, num_instances, **kwargs):
         super().__init__(program=None)
+        self.window = wnd
+        ctx = wnd.ctx
         self.num_instances = num_instances
 
         # Vertex Shader
@@ -56,6 +58,8 @@ class PhongProgram(MeshProgram):
         self.program["m_model"].write(model_matrix)
         self.program["m_cam"].write(camera_matrix)
         self.program["normalization_factor"].value = mesh.norm_factor
+        self.program["shininess"].value = self.window.shininess
+        self.program["spec_strength"].value =self.window.spec_strength
 
         # Only invert matrix / calculate camera position if camera is moved
         if list(camera_matrix) != PhongProgram.current_camera_matrix:
@@ -78,7 +82,7 @@ class PhongProgram(MeshProgram):
             self.default_texture.use()
 
         # Set light values
-        lights = list(mesh.lights.values())
+        lights = list(self.window.lights.values())
         num_lights = len(lights)
 
         # Trim lights down if exceeding max amount for buffer in shader

@@ -474,7 +474,6 @@ class EntityDelegate(Delegate):
             # Update State
             if id not in window.lights:
                 window.lights[id] = light_info
-                window.num_lights += 1
 
 
     def remove_lights(self, window):
@@ -482,7 +481,6 @@ class EntityDelegate(Delegate):
         
         for light_id in self.info.lights:
             del window.lights[light_id]
-            window.num_lights -= 1
 
 
 
@@ -605,8 +603,6 @@ class GeometryDelegate(Delegate):
     
         # Create Mesh and add lights
         mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material.mglw_material, attributes=new_attributes)
-        mesh.lights = window.lights
-        mesh.num_lights = window.num_lights
         mesh.norm_factor = norm_factor
         
         # Add instances to vao if applicable, also add appropriate mesh program
@@ -617,7 +613,7 @@ class GeometryDelegate(Delegate):
             vao.buffer(instance_bytes, '16f/i', 'instance_matrix')
 
             num_instances = int(instance_buffer.size / 64) # 16 4 byte floats per instance
-            mesh.mesh_program = programs.PhongProgram(window.ctx, num_instances)
+            mesh.mesh_program = programs.PhongProgram(window, num_instances)
 
             # For debugging, instances...
             # instance_list = np.frombuffer(instance_bytes, np.single).tolist()
@@ -631,7 +627,7 @@ class GeometryDelegate(Delegate):
             # print(f"Instance rendering rotations: \n{rotations}")
 
         else:
-            mesh.mesh_program = programs.PhongProgram(window.ctx, num_instances=-1)
+            mesh.mesh_program = programs.PhongProgram(window, num_instances=-1)
         
         # Add mesh as new node to scene graph
         scene.meshes.append(mesh)

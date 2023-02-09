@@ -9,6 +9,8 @@ import pyglet
 import imgui
 from imgui.integrations.pyglet import create_renderer
 
+DEFAULT_SHININESS = 10.0
+DEFAULT_SPEC_STRENGTH = 0.2
 
 class Window(mglw.WindowConfig):
     """Base Window with built in 3D camera support    
@@ -26,11 +28,7 @@ class Window(mglw.WindowConfig):
     # MATCH SCREEN RATE
 
     def __init__(self, **kwargs):
-        #settings.WINDOW['class'] = 'moderngl_window.context.pyqt5.window'
         super().__init__(**kwargs)
-        
-        # self.wnd = mglw.create_window_from_settings()
-        # self.ctx = self.wnd.ctx
 
         # Set Up Camera
         self.camera = mglw.scene.camera.KeyboardCamera(self.wnd.keys, aspect_ratio=self.wnd.aspect_ratio)
@@ -45,7 +43,6 @@ class Window(mglw.WindowConfig):
         
         # Store Light Info
         self.lights = {} # light_id: light_info
-        self.num_lights = 0
 
         # Create scene and set up basic nodes
         self.scene = mglw.scene.Scene("Noodles Scene")
@@ -53,6 +50,10 @@ class Window(mglw.WindowConfig):
         root.matrix_global = np.identity(4, np.float32)
         self.scene.root_nodes.append(root)
         self.scene.cameras.append(self.camera)
+        
+        # Store shader settings
+        self.shininess = DEFAULT_SHININESS
+        self.spec_strength = DEFAULT_SPEC_STRENGTH
 
         # Set up GUI
         imgui.create_context()
@@ -139,6 +140,7 @@ class Window(mglw.WindowConfig):
                     exit(1) # Need to hook this up to window
 
                 imgui.end_menu()
+
             imgui.end_main_menu_bar()
 
         # State Inspector
@@ -168,7 +170,9 @@ class Window(mglw.WindowConfig):
                     self.client.invoke_method(delegate.name, [])
                 else:
                     imgui.open_popup(f"Invoke {id}")
+            imgui.core.push_text_wrap_pos()
             imgui.text(f"Docs: {delegate.docs}")
+            imgui.core.pop_text_wrap_pos()
             imgui.separator()
 
 
@@ -179,7 +183,7 @@ class Window(mglw.WindowConfig):
                 args = {}
                 for arg in delegate.info.arg_doc:
                     imgui.text(arg.name.upper())
-                    changed, values = imgui.input_int4(f"({arg.editor_hint}", 1,1,1,1)
+                    changed, values = imgui.input_int4(f"({arg.editor_hint})", 1,1,1,1)
                     args[arg.name] = values
                     imgui.text(arg.doc)
                     imgui.separator()
@@ -192,4 +196,15 @@ class Window(mglw.WindowConfig):
 
         imgui.end()
 
+        # Shader Settings
+        shininess = self.shininess
+        spec = self.spec_strength
+        imgui.begin("Shader")
+        changed, shininess = imgui.slider_float("Shininess", shininess, 0.0, 100.0, format="%.0f", power=1)
+        if changed:
+            self.shininess = shininess
 
+        changed, spec = imgui.slider_float("Specular Strength", spec, 0.0, 1.0, power=1)
+        if changed:
+            self.spec_strength = spec
+        imgui.end()

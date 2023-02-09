@@ -20,6 +20,8 @@ uniform LightInfo lights[8];
 uniform vec4 material_color;
 uniform sampler2D base_texture;
 uniform bool double_sided;
+uniform float shininess;
+uniform float spec_strength;
 
 out vec4 f_color;
 
@@ -73,11 +75,9 @@ void main() {
         vec4 diffuse = light.color * max(0.0, dot(L, N)) * falloff; // using lambertian attenuation
 
         // Compute Specular
-        float shininess = 25.0;
-        float specularStrength = 0.4;
         vec3 reflection = -reflect(L, N);
         float specularPower = pow(max(0.0, dot(V, reflection)), shininess);
-        float specular = specularStrength * specularPower * falloff;
+        float specular = spec_strength * specularPower * falloff;
 
         // Get Ambient
         vec3 ambient = light.ambient;
