@@ -18,25 +18,28 @@ out vec3 world_position;
 out vec2 texcoord;
 out vec3 view_vector;
 
+
+vec3 quat_transform(vec4 q, vec3 v){
+    return v + 2.0*cross(cross(v, q.xyz ) + q.w*v, q.xyz);
+}
+
 void main() {
 
     // Get rotation matrix from quaternion 
     vec4 q = instance_matrix[2];
-    vec3 col1 = vec3(2 * (q[0]*q[0] + q[1]*q[1])-1, 2 * (q[1]*q[2] + q[0]*q[3]), 2 * (q[1]*q[3] - q[0]*q[2]));
-    vec3 col2 = vec3(2 * (q[1]*q[2] - q[0]*q[3]), 2 * (q[0]*q[0] + q[2]*q[2]) - 1, 2 * (q[2]*q[3] + q[0]*q[1]));
-    vec3 col3 = vec3(2 * (q[1]*q[3] + q[0]*q[2]), 2 * (q[2]*q[3] - q[0]*q[1]), 2 * (q[0]*q[0] + q[3]*q[3]) - 1);
-    mat3 rotation_matrix = mat3(col1, col2, col3);
-
     mat4 mv = m_cam * m_model;
-    vec4 local_position = vec4(rotation_matrix * (in_position * vec3(instance_matrix[3])) +  vec3(instance_matrix[0]), 1.0);
+
+    // Scale, rotate, then shift vertex
+    vec4 local_position = vec4(quat_transform(q, (in_position * vec3(instance_matrix[3]))) +  vec3(instance_matrix[0]), 1.0);
     vec4 view_position = mv * local_position;
 
     gl_Position = m_proj * view_position;
 
     mat3 normal_matrix = mat3(m_model);
-    normal = normalize(normal_matrix * rotation_matrix * in_normal);
+    normal = normalize(normal_matrix * quat_transform(q, in_normal));
     color = in_color * instance_matrix[1];
     world_position = (m_model * local_position).xyz;
     texcoord = in_texture / normalization_factor;
     view_vector = camera_position - world_position;
+
 }
