@@ -66,6 +66,7 @@ class PhongProgram(MeshProgram):
             camera_world = np.linalg.inv(camera_matrix)          
             PhongProgram.current_camera_matrix = list(camera_matrix)
             PhongProgram.camera_position = tuple(camera_world.m4[:3])
+            self.window.camera_position = [round(x, 2) for x in PhongProgram.camera_position]
         self.program["camera_position"].value = PhongProgram.camera_position
 
         # Feed Material in if present

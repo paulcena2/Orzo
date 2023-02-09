@@ -36,6 +36,7 @@ class Window(mglw.WindowConfig):
         self.camera.mouse_sensitivity = 0.1
         self.camera.velocity = 1.0
         self.camera.zoom = 2.5
+        self.camera_position = None
         
         # Window Options
         self.wnd.mouse_exclusivity = True
@@ -58,15 +59,6 @@ class Window(mglw.WindowConfig):
         # Set up GUI
         imgui.create_context()
         self.impl = create_renderer(self.wnd._window)
-
-        # Pyglet Gui
-        window = self.wnd._window
-        self.batch = pyglet.graphics.Batch()
-        default = pyglet.font.load(("Proggy Clean", "Times New Roman"), 13)
-        pyglet.text.Label("Press 'Space' to toggle camera/GUI", font_name=default,
-                          font_size=12,
-                          x=window.width-140, y=20,
-                          anchor_x='center', anchor_y='center', batch=self.batch)
 
 
     def key_event(self, key, action, modifiers):
@@ -108,7 +100,6 @@ class Window(mglw.WindowConfig):
         )
 
         # Render GUI elements
-        self.batch.draw()
         self.update_gui()
         imgui.render()
         self.impl.render(imgui.get_draw_data())
@@ -155,9 +146,9 @@ class Window(mglw.WindowConfig):
         imgui.end()
 
         # Scene Info
-        imgui.begin("Scene Info")
-        imgui.text(f"Camera Position: {None}")
-        imgui.text(f"Light Positions: {None}")
+        imgui.begin("Basic Info")
+        imgui.text(f"Camera Position: {self.camera_position}")
+        imgui.text(f"Press 'Space' to toggle camera/GUI")
         imgui.end()
 
         # Methods
