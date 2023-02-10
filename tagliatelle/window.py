@@ -12,6 +12,29 @@ from imgui.integrations.pyglet import create_renderer
 DEFAULT_SHININESS = 10.0
 DEFAULT_SPEC_STRENGTH = 0.2
 
+HINT_MAP = {
+    "noo::any": (imgui.core.input_text, ["Any","", 256]),
+    "noo::text": (imgui.core.input_text, ["Text", "", 256]),
+    "noo::integer": (imgui.core.input_int, ["Int", 0]),
+    "noo::real": (imgui.core.input_float, ["Real", 1.0]),
+    "noo::array": (imgui.core.input_text, ["[Array]", "", 256]),
+    "noo::map": (imgui.core.input_text, ["{dict\}", "", 256]),
+    "noo::any_id": (imgui.core.input_int2, ["Id", 0, 0]),
+    "noo::entity_id": (imgui.core.input_int2, ["Entity Id", 0, 0]),
+    "noo::table_id": (imgui.core.input_int2, ["Table Id", 0, 0]),
+    "noo::plot_id": (imgui.core.input_int2, ["Plot Id", 0, 0]),
+    "noo::method_id": (imgui.core.input_int2, ["Method Id", 0, 0]),
+    "noo::signal_id": (imgui.core.input_int2, ["Signal Id", 0, 0]),
+    "noo::image_id": (imgui.core.input_int2, ["Image Id", 0, 0]),
+    "noo::sampler_id": (imgui.core.input_int2, ["Sampler Id", 0, 0]),
+    "noo::texture_id": (imgui.core.input_int2, ["Texture Id", 0, 0]),
+    "noo::material_id": (imgui.core.input_int2, ["Material Id", 0, 0]),
+    "noo::light_id": (imgui.core.input_int2, ["Light Id", 0, 0]),
+    "noo::buffer_id": (imgui.core.input_int2, ["Buffer Id", 0, 0]),
+    "noo::bufferview_id": (imgui.core.input_int2, ["Buffer View Id", 0, 0]),
+    "noo::range(a,b,c)": (imgui.core.input_float3, ["Range (a->b) step by c", 0, 0, 0]),
+}
+
 class Window(mglw.WindowConfig):
     """Base Window with built in 3D camera support    
     
@@ -59,6 +82,7 @@ class Window(mglw.WindowConfig):
         # Set up GUI
         imgui.create_context()
         self.impl = create_renderer(self.wnd._window)
+        self.arg_map = HINT_MAP
 
 
     def key_event(self, key, action, modifiers):
@@ -140,9 +164,16 @@ class Window(mglw.WindowConfig):
         
             expanded, visible = imgui.collapsing_header(specifier, visible=True)
 
-            if expanded and specifier != "document":
-                for id, delegate in state[specifier].items():
-                    imgui.text(f"{id}: {delegate}")
+            if not expanded or specifier == "document":
+                continue
+
+            for id, delegate in state[specifier].items():
+                imgui.text(f"{delegate}")
+
+                if specifier == "textures":
+                    # preview
+                    pass
+
         imgui.end()
 
         # Scene Info
@@ -174,7 +205,17 @@ class Window(mglw.WindowConfig):
                 args = {}
                 for arg in delegate.info.arg_doc:
                     imgui.text(arg.name.upper())
-                    changed, values = imgui.input_int4(f"({arg.editor_hint})", 1,1,1,1)
+                    
+                    # Get input block based on hint
+                    try:
+                        hint = arg.editor_hint if hasattr(arg, "editor_hint") else "noo::any"
+                        component, default_vals = self.arg_map[hint]
+                    except:
+                        raise Exception(f"Invalid Hint for {arg.name} arg")
+
+                    changed, values = component(*default_vals) 
+
+                    self.arg_map[hint][1][1:1+len(values)] = values
                     args[arg.name] = values
                     imgui.text(arg.doc)
                     imgui.separator()
