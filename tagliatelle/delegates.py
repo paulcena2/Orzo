@@ -3,10 +3,10 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
-from urllib.parse import _NetlocResultMixinStr
 if TYPE_CHECKING:
     from penne.messages import Message
     from penne.core import Client
+
 import io
 import urllib.request
 
@@ -17,6 +17,7 @@ import moderngl_window as mglw
 import moderngl
 import numpy as np
 from PIL import Image
+import imgui
 
 @dataclass
 class FormatInfo:
@@ -106,6 +107,11 @@ class MethodDelegate(Delegate):
             rep += f"\n\t\t{arg.name}: {arg.doc}"
         return rep
 
+    def gui_rep(self):
+        """Representation to be displayed in GUI"""
+        imgui.text(f"{self}")
+
+
 
 class SignalDelegate(Delegate):
     """Delegate representing a signal coming from the server
@@ -129,6 +135,10 @@ class SignalDelegate(Delegate):
 
     def on_remove(self, message: Message): 
         pass
+
+    def gui_rep(self):
+        """Representation to be displayed in GUI"""
+        imgui.text(f"{self}")
 
 
 class SelectionRange(tuple):
@@ -418,9 +428,16 @@ class TableDelegate(Delegate):
 
         self.tbl_update_selection(on_done, name, {"rows": keys})
 
+    def gui_rep(self):
+        """Representation to be displayed in GUI"""
+        imgui.text(f"{self}")
+
 
 class DocumentDelegate(Delegate):
-    pass
+    
+    def gui_rep(self):
+        """Representation to be displayed in GUI"""
+        imgui.text(f"{self}")
 
 
 class EntityDelegate(Delegate):
@@ -436,6 +453,11 @@ class EntityDelegate(Delegate):
         super().__init__(client, message, specifier)
         self.name = "No-Name Entity" if not hasattr(self.info, "name") else self.info.name
         self.nodes = []
+        self.lights = None
+        self.geometry = None
+        self.methods = None
+        self.signals = None
+        self.table = None
 
 
     def render_entity(self, window):
@@ -447,6 +469,7 @@ class EntityDelegate(Delegate):
         # Prepare Mesh
         render_rep = self.info.render_rep
         geometry = self.client.state["geometries"][render_rep["mesh"]]
+        self.geometry = geometry
         patches = geometry.patches
         instances = render_rep.instances if hasattr(render_rep, "instances") else None
         
@@ -458,12 +481,13 @@ class EntityDelegate(Delegate):
 
     def attach_lights(self, window):
         """Callback to handle lights attached to an entity"""
-
+        self.lights = []
         for light_id in self.info.lights:
 
             # Add Positiona and direction to info
             id = tuple(light_id)
             light_delegate = self.client.get_component("lights", id)
+            self.lights.append(light_delegate)
             light_info = light_delegate.light_basics
             world_transform = self.get_world_transform()
             world_pos = np.matmul(world_transform, np.array([0.0, 0.0, 0.0, 1.0]))
@@ -515,6 +539,15 @@ class EntityDelegate(Delegate):
         if hasattr(self.info, "lights"):
             self.client.callback_queue.put((self.attach_lights, []))
 
+        if hasattr(self.info, "table"):
+            self.table = self.info.table
+            
+        if hasattr(self.info, "methods_list"):
+            self.methods = [self.client.get_component("methods", id) for id in self.info.methods_list]
+
+        if hasattr(self.info, "signals_list"):
+            self.methods = [self.client.get_component("methods", id) for id in self.info.signals_list]
+
 
     def on_remove(self, message: Message):
 
@@ -524,9 +557,34 @@ class EntityDelegate(Delegate):
         if hasattr(self.info, "lights"):
             self.client.callback_queue.put((self.remove_lights, []))
 
+    
+    def __repr__(self) -> str:
+        return f"{self.name} - {self.info.id}"
+
+    
+    def gui_rep(self):
+        """Representation to be displayed in GUI"""
+        imgui.indent()
+        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        if expanded:
+            if self.geometry:
+                self.geometry.gui_rep()
+            if self.table:
+                self.table.gui_rep()
+            if self.lights:
+                for light in self.lights: light.gui_rep()
+            if self.methods:
+                for method in self.methods: method.gui_rep()
+            if self.signals:
+                for signal in self.lights: signal.gui_rep()
+        imgui.unindent()
+
 
 class PlotDelegate(Delegate):
-    pass
+    
+    def gui_rep(self):
+        """Representation to be displayed in GUI"""
+        imgui.text(f"{self}")
 
 
 class GeometryDelegate(Delegate):
@@ -567,6 +625,7 @@ class GeometryDelegate(Delegate):
 
         # Get Material - for now material delegate uses default texture
         material = self.client.get_component("materials", patch.material)
+        self.material = material
         scene.materials.append(material.mglw_material)
 
         # Reformat attributes
@@ -608,12 +667,13 @@ class GeometryDelegate(Delegate):
         # Add instances to vao if applicable, also add appropriate mesh program
         if instances:
             instance_view = self.client.state["bufferviews"][instances.view]
+            self.instance_view = instance_view
             instance_buffer = instance_view.buffer
             instance_bytes = instance_buffer.bytes
             vao.buffer(instance_bytes, '16f/i', 'instance_matrix')
 
-            num_instances = int(instance_buffer.size / 64) # 16 4 byte floats per instance
-            mesh.mesh_program = programs.PhongProgram(window, num_instances)
+            self.num_instances = int(instance_buffer.size / 64) # 16 4 byte floats per instance
+            mesh.mesh_program = programs.PhongProgram(window, self.num_instances)
 
             # For debugging, instances...
             # instance_list = np.frombuffer(instance_bytes, np.single).tolist()
@@ -648,10 +708,27 @@ class GeometryDelegate(Delegate):
         # assuming all attrs use same view
         view_id = self.first_patch_attrs[0]["view"] 
         self.buffer_view = self.client.state["bufferviews"][view_id]
-
+        self.material = None
+        self.instance_view = None
+        self.num_instances = 0
 
     def on_remove(self, message: Message):
         pass
+
+    def gui_rep(self):
+        """Representation to be displayed in GUI"""
+        imgui.indent()
+        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        if expanded:
+            self.buffer_view.gui_rep()
+            if self.material:
+                self.material.gui_rep()
+            if self.instance_view:
+                imgui.text("Instances: ")
+                imgui.same_line()
+                self.instance_view.gui_rep()
+            imgui.text(f"Num Instances: {self.num_instances}")
+        imgui.unindent()
 
 
 class LightDelegate(Delegate):
@@ -697,6 +774,15 @@ class LightDelegate(Delegate):
             "info": info,
         }
 
+    def gui_rep(self):
+        """Representation to be displayed in GUI"""
+        imgui.indent()
+        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        if expanded:
+            for key, val in self.light_basics.items():
+                imgui.text(f"{key.upper()}: {val}")
+        imgui.unindent()
+
 
 class MaterialDelegate(Delegate):
     """Delegate representing a Noodles Material"""
@@ -734,6 +820,10 @@ class MaterialDelegate(Delegate):
         material.double_sided = False if not hasattr(message, "double_sided") else message.double_sided
         self.mglw_material = material
 
+    def gui_rep(self):
+        """Representation to be displayed in GUI"""
+        imgui.text(f"{self}")
+
 
 class ImageDelegate(Delegate):
     
@@ -763,6 +853,10 @@ class ImageDelegate(Delegate):
             with urllib.request.urlopen(message.uri_bytes) as response:
                 self.bytes = response.read()
 
+    def gui_rep(self):
+        """Representation to be displayed in GUI"""
+        imgui.text(f"{self}")
+
 
 class TextureDelegate(Delegate):
 
@@ -771,17 +865,23 @@ class TextureDelegate(Delegate):
     #   components from decoder - 3/4
     def set_up_texture(self, window):
         image = self.client.get_component("images", self.info.image)
+        self.image = image
         self.mglw_texture = window.ctx.texture(image.size, image.components, image.bytes)
         
     
     def on_new(self, message: Message):
         self.mglw_texture = None
         self.sampler = None
+        self.image = None
 
         self.client.callback_queue.put((self.set_up_texture, []))
         
         if hasattr(self.info, "sampler"):
             self.sampler = self.client.get_component("samplers", self.info.sampler)
+
+    def gui_rep(self):
+        """Representation to be displayed in GUI"""
+        imgui.text(f"{self}")
         
 
 class SamplerDelegate(Delegate):
@@ -817,6 +917,10 @@ class SamplerDelegate(Delegate):
         self.mglw_sampler = None
         self.client.callback_queue.put((self.set_up_sampler, []))
 
+    def gui_rep(self):
+        """Representation to be displayed in GUI"""
+        imgui.text(f"{self}")
+
 
 class BufferDelegate(Delegate):
     """Stores Buffer Info for Easier Access"""
@@ -834,10 +938,18 @@ class BufferDelegate(Delegate):
         else:
             raise Exception("Malformed Buffer Message")
 
+    def gui_rep(self):
+        """Representation to be displayed in GUI"""
+        imgui.text(f"{self}")
+
 
 class BufferViewDelegate(Delegate):
     """Stores pointer to buffer for easier access"""
     
     def on_new(self, message: Message):
         self.buffer: BufferDelegate = self.client.state["buffers"][message.source_buffer]
+
+    def gui_rep(self):
+        """Representation to be displayed in GUI"""
+        imgui.text(f"{self}")
 

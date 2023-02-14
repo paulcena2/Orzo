@@ -4,7 +4,7 @@ import moderngl
 import numpy as np
 from pathlib import Path
 import queue
-import pyglet
+import json
 
 import imgui
 from imgui.integrations.pyglet import create_renderer
@@ -13,14 +13,14 @@ DEFAULT_SHININESS = 10.0
 DEFAULT_SPEC_STRENGTH = 0.2
 
 HINT_MAP = {
-    "noo::any": (imgui.core.input_text, ["Any","", 256]),
-    "noo::text": (imgui.core.input_text, ["Text", "", 256]),
-    "noo::integer": (imgui.core.input_int, ["Int", 0]),
-    "noo::real": (imgui.core.input_float, ["Real", 1.0]),
-    "noo::array": (imgui.core.input_text, ["[Array]", "", 256]),
-    "noo::map": (imgui.core.input_text, ["{dict\}", "", 256]),
+    "noo::any": (imgui.core.input_text, ("Any", 256), ("")),
+    "noo::text": (imgui.core.input_text, ("Text", 256), ("")),
+    "noo::integer": (imgui.core.input_int, ("Int"), ("")),
+    "noo::real": (imgui.core.input_float, ("Real"), (1.0)),
+    "noo::array": (imgui.core.input_text, ["[Array]", 256], ["[]"]),
+    "noo::map": (imgui.core.input_text, ["{dict}", "{}", 256]),
     "noo::any_id": (imgui.core.input_int2, ["Id", 0, 0]),
-    "noo::entity_id": (imgui.core.input_int2, ["Entity Id", 0, 0]),
+    "noo::entity_id": (imgui.core.input_int2, ["Entity Id"], [0, 0]),
     "noo::table_id": (imgui.core.input_int2, ["Table Id", 0, 0]),
     "noo::plot_id": (imgui.core.input_int2, ["Plot Id", 0, 0]),
     "noo::method_id": (imgui.core.input_int2, ["Method Id", 0, 0]),
@@ -82,7 +82,7 @@ class Window(mglw.WindowConfig):
         # Set up GUI
         imgui.create_context()
         self.impl = create_renderer(self.wnd._window)
-        self.arg_map = HINT_MAP
+        self.args = {}
 
 
     def key_event(self, key, action, modifiers):
@@ -161,19 +161,13 @@ class Window(mglw.WindowConfig):
         # State Inspector
         imgui.begin("State")
         for specifier in state:
-        
-            expanded, visible = imgui.collapsing_header(specifier, visible=True)
 
+            expanded, visible = imgui.collapsing_header(specifier, visible=True)
             if not expanded or specifier == "document":
                 continue
 
             for id, delegate in state[specifier].items():
-                imgui.text(f"{delegate}")
-
-                if specifier == "textures":
-                    # preview
-                    pass
-
+                delegate.gui_rep()
         imgui.end()
 
         # Scene Info
@@ -183,7 +177,26 @@ class Window(mglw.WindowConfig):
         imgui.end()
 
         # Methods
+        self.render_methods()
+
+        # Shader Settings
+        shininess = self.shininess
+        spec = self.spec_strength
+        imgui.begin("Shader")
+        changed, shininess = imgui.slider_float("Shininess", shininess, 0.0, 100.0, format="%.0f", power=1)
+        if changed:
+            self.shininess = shininess
+
+        changed, spec = imgui.slider_float("Specular Strength", spec, 0.0, 1.0, power=1)
+        if changed:
+            self.spec_strength = spec
+        imgui.end()
+
+
+    def render_methods(self):
+        # Methods
         imgui.begin("Methods")
+        state = self.client.state
         for id, delegate in state["methods"].items():
             imgui.begin_group()
             
@@ -202,41 +215,44 @@ class Window(mglw.WindowConfig):
 
                 imgui.text("Input Arguments")
                 imgui.separator()
-                args = {}
                 for arg in delegate.info.arg_doc:
                     imgui.text(arg.name.upper())
                     
-                    # Get input block based on hint
-                    try:
-                        hint = arg.editor_hint if hasattr(arg, "editor_hint") else "noo::any"
-                        component, default_vals = self.arg_map[hint]
-                    except:
-                        raise Exception(f"Invalid Hint for {arg.name} arg")
+                    # Get input block from state or get default
+                    if arg.name in self.args:
+                        component, parameters, vals = self.args[arg.name]
+                    else:
+                        try:
+                            hint = arg.editor_hint if hasattr(arg, "editor_hint") else "noo::any"
+                            component, parameters, vals = HINT_MAP[hint]
+                        except:
+                            raise Exception(f"Invalid Hint for {arg.name} arg")
 
-                    changed, values = component(*default_vals) 
+                    label, rest = parameters[0], parameters[1:]
+                    if isinstance(vals, list):
+                        changed, values = component(label, *vals, *rest)
+                    else:
+                        changed, values = component(f"{label} for {arg.name}", vals, *rest)
 
-                    self.arg_map[hint][1][1:1+len(values)] = values
-                    args[arg.name] = values
+                    self.args[arg.name] = (component, parameters, values)
                     imgui.text(arg.doc)
                     imgui.separator()
                 
                 if imgui.button("Submit"):
-                    print(f"Invoking the method: {delegate.name} w/ args: {args}")
-                    self.client.invoke_method(delegate.name, list(args.values()))
+
+                    # Get vals and convert type if applicable
+                    final_vals = []
+                    for arg in self.args.values():
+                        value = arg[2]
+                        try:
+                            clean_val = json.loads(value)
+                        except:
+                            clean_val = value
+                        final_vals.append(clean_val)
+
+                    print(f"Invoking the method: {delegate.name} w/ args: {final_vals}")
+                    self.client.invoke_method(delegate.name, final_vals)
                 imgui.end_popup()
             imgui.end_group()
 
-        imgui.end()
-
-        # Shader Settings
-        shininess = self.shininess
-        spec = self.spec_strength
-        imgui.begin("Shader")
-        changed, shininess = imgui.slider_float("Shininess", shininess, 0.0, 100.0, format="%.0f", power=1)
-        if changed:
-            self.shininess = shininess
-
-        changed, spec = imgui.slider_float("Specular Strength", spec, 0.0, 1.0, power=1)
-        if changed:
-            self.spec_strength = spec
         imgui.end()
