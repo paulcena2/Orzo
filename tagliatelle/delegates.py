@@ -526,9 +526,11 @@ class EntityDelegate(Delegate):
         """Remove mesh from render"""
 
         # Need to test, enough to remove from render?
+        scene = window.scene
         for node in self.nodes:
-            window.scene.root_nodes[0].children.remove(node)
-            window.scene.nodes.remove(node)
+            scene.root_nodes[0].children.remove(node)
+            scene.nodes.remove(node)
+            scene.meshes.remove(node.mesh)
 
 
     def on_new(self, message: Message):
@@ -547,6 +549,17 @@ class EntityDelegate(Delegate):
 
         if hasattr(self.info, "signals_list"):
             self.methods = [self.client.get_component("methods", id) for id in self.info.signals_list]
+
+
+    def on_update(self, message: Message):
+        
+        if hasattr(self.info, "render_rep"):
+            self.client.callback_queue.put((self.remove_from_render, []))
+            self.client.callback_queue.put((self.render_entity, []))
+
+        if hasattr(self.info, "lights"):
+            self.client.callback_queue.put((self.attach_lights, []))
+            self.client.callback_queue.put((self.remove_lights, []))
 
 
     def on_remove(self, message: Message):
