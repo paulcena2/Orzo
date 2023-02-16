@@ -471,7 +471,10 @@ class EntityDelegate(Delegate):
         geometry = self.client.state["geometries"][render_rep["mesh"]]
         self.geometry = geometry
         patches = geometry.patches
-        instances = render_rep.instances if hasattr(render_rep, "instances") else None
+        if isinstance(render_rep, dict): # update replaces the message object render rep with a dict -> hasattr = None
+            instances = render_rep.get("instances", None)
+        else:
+            instances = render_rep.instances if hasattr(render_rep, "instances") else None
         
         # Render Each Patch Using Geometry Delegate
         for patch in patches:
@@ -700,6 +703,7 @@ class GeometryDelegate(Delegate):
             # print(f"Instance rendering rotations: \n{rotations}")
 
         else:
+            self.instances = 0
             mesh.mesh_program = programs.PhongProgram(window, num_instances=-1)
         
         # Add mesh as new node to scene graph
@@ -737,9 +741,7 @@ class GeometryDelegate(Delegate):
             if self.material:
                 self.material.gui_rep()
             if self.instance_view:
-                imgui.text("Instances: ")
-                imgui.same_line()
-                self.instance_view.gui_rep()
+                self.instance_view.gui_rep("Instances - ")
             imgui.text(f"Num Instances: {self.num_instances}")
         imgui.unindent()
 
@@ -804,11 +806,11 @@ class MaterialDelegate(Delegate):
         """Set up texture for base color if applicable"""
         
         # Get texture
-        texture = self.client.get_component("textures", self.info.pbr_info.base_color_texture.texture)
-        mglw_texture = texture.mglw_texture
+        self.texture = self.client.get_component("textures", self.info.pbr_info.base_color_texture.texture)
+        mglw_texture = self.texture.mglw_texture
 
         # Hook texture up to sampler
-        mglw_sampler = texture.sampler.mglw_sampler
+        mglw_sampler = self.texture.sampler.mglw_sampler
         mglw_sampler.texture = mglw_texture
 
         # Make sure wrapping flags match
@@ -822,9 +824,11 @@ class MaterialDelegate(Delegate):
         """"Create mglw_material from noodles message"""
 
         self.name = "No-Name Material" if not hasattr(message, "name") else message.name
+        self.texture = None
+        self.color = message.pbr_info.base_color
 
         material = mglw.scene.Material(f"{self.name}")
-        material.color = message.pbr_info.base_color
+        material.color = self.color
 
         # For now only worrying about base_color_texture, need to delay in queue to allow for other setup - better solution?
         if hasattr(message.pbr_info, "base_color_texture"):
@@ -835,7 +839,12 @@ class MaterialDelegate(Delegate):
 
     def gui_rep(self):
         """Representation to be displayed in GUI"""
-        imgui.text(f"{self}")
+        imgui.indent()
+        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        if expanded:
+            imgui.text(f"Color: {self.color}")
+            self.texture.gui_rep() if self.texture else imgui.text(f"No Texture")
+        imgui.unindent()
 
 
 class ImageDelegate(Delegate):
@@ -844,6 +853,7 @@ class ImageDelegate(Delegate):
         self.size = (0, 0)
         self.components = None
         self.bytes = None
+        self.texture_id = None
 
         component_map = {
             "RGB": 3,
@@ -868,7 +878,13 @@ class ImageDelegate(Delegate):
 
     def gui_rep(self):
         """Representation to be displayed in GUI"""
-        imgui.text(f"{self}")
+        imgui.indent()
+        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        if expanded:
+            imgui.image(self.texture_id, *self.size)
+            imgui.text(f"Size: {self.size}")
+            imgui.text(f"Components: {self.components}")
+        imgui.unindent()
 
 
 class TextureDelegate(Delegate):
@@ -880,6 +896,7 @@ class TextureDelegate(Delegate):
         image = self.client.get_component("images", self.info.image)
         self.image = image
         self.mglw_texture = window.ctx.texture(image.size, image.components, image.bytes)
+        self.image.texture_id = self.mglw_texture.glo
         
     
     def on_new(self, message: Message):
@@ -894,7 +911,12 @@ class TextureDelegate(Delegate):
 
     def gui_rep(self):
         """Representation to be displayed in GUI"""
-        imgui.text(f"{self}")
+        imgui.indent()
+        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        if expanded:
+            self.image.gui_rep()
+            self.sampler.gui_rep() if self.sampler else imgui.text(f"No Sampler")
+        imgui.unindent()
         
 
 class SamplerDelegate(Delegate):
@@ -913,16 +935,16 @@ class SamplerDelegate(Delegate):
 
     def set_up_sampler(self, window):
 
-        min_filter = self.FILTER_MAP[self.info.min_filter] if hasattr(self.info, "min_filter") else moderngl.LINEAR_MIPMAP_LINEAR
-        mag_filter = self.FILTER_MAP[self.info.mag_filter] if hasattr(self.info, "mag_filter") else moderngl.LINEAR
+        self.min_filter = self.FILTER_MAP[self.info.min_filter] if hasattr(self.info, "min_filter") else moderngl.LINEAR_MIPMAP_LINEAR
+        self.mag_filter = self.FILTER_MAP[self.info.mag_filter] if hasattr(self.info, "mag_filter") else moderngl.LINEAR
         
-        rep_x = self.SAMPLER_MODE_MAP[self.info.wrap_s] if hasattr(self.info, "wrap_s") else True
-        rep_y = self.SAMPLER_MODE_MAP[self.info.wrap_t] if hasattr(self.info, "wrap_t") else True
+        self.rep_x = self.SAMPLER_MODE_MAP[self.info.wrap_s] if hasattr(self.info, "wrap_s") else True
+        self.rep_y = self.SAMPLER_MODE_MAP[self.info.wrap_t] if hasattr(self.info, "wrap_t") else True
         
         self.mglw_sampler = window.ctx.sampler(
-            filter=(min_filter, mag_filter), 
-            repeat_x=rep_x, 
-            repeat_y=rep_y,
+            filter=(self.min_filter, self.mag_filter), 
+            repeat_x=self.rep_x, 
+            repeat_y=self.rep_y,
             repeat_z=False
         )
     
@@ -932,7 +954,14 @@ class SamplerDelegate(Delegate):
 
     def gui_rep(self):
         """Representation to be displayed in GUI"""
-        imgui.text(f"{self}")
+        imgui.indent()
+        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        if expanded:
+            imgui.text(f"Min Filter: {self.min_filter}")
+            imgui.text(f"Mag Filter: {self.mag_filter}")
+            imgui.text(f"Repeat X: {self.rep_x}")
+            imgui.text(f"Repeat Y: {self.rep_y}")
+        imgui.unindent()
 
 
 class BufferDelegate(Delegate):
@@ -953,7 +982,12 @@ class BufferDelegate(Delegate):
 
     def gui_rep(self):
         """Representation to be displayed in GUI"""
-        imgui.text(f"{self}")
+        imgui.indent()
+        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        if expanded:
+            imgui.text(f"Size: {self.size} bytes")
+            imgui.text(f"Bytes: {self.bytes[:4]}...{self.bytes[-4:]}")
+        imgui.unindent()
 
 
 class BufferViewDelegate(Delegate):
@@ -962,7 +996,11 @@ class BufferViewDelegate(Delegate):
     def on_new(self, message: Message):
         self.buffer: BufferDelegate = self.client.state["buffers"][message.source_buffer]
 
-    def gui_rep(self):
+    def gui_rep(self, description=""):
         """Representation to be displayed in GUI"""
-        imgui.text(f"{self}")
+        imgui.indent()
+        expanded, visible = imgui.collapsing_header(f"{description}{self}", visible=True)
+        if expanded:
+            self.buffer.gui_rep()
+        imgui.unindent()
 
