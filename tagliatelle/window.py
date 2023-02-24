@@ -1,5 +1,4 @@
 import moderngl_window as mglw
-from moderngl_window.conf import settings
 import moderngl
 import numpy as np
 from pathlib import Path
@@ -9,14 +8,16 @@ import json
 import imgui
 from imgui.integrations.pyglet import create_renderer
 
+import penne
+
 DEFAULT_SHININESS = 10.0
 DEFAULT_SPEC_STRENGTH = 0.2
 
 HINT_MAP = {
-    "noo::any": (imgui.core.input_text, ("Any", 256), ("")),
-    "noo::text": (imgui.core.input_text, ("Text", 256), ("")),
-    "noo::integer": (imgui.core.input_int, ("Int"), ("")),
-    "noo::real": (imgui.core.input_float, ("Real"), (1.0)),
+    "noo::any": (imgui.core.input_text, ("Any", 256), ""),
+    "noo::text": (imgui.core.input_text, ("Text", 256), ""),
+    "noo::integer": (imgui.core.input_int, "Int", ""),
+    "noo::real": (imgui.core.input_float, "Real", 1.0),
     "noo::array": (imgui.core.input_text, ["[Array]", 256], ["[]"]),
     "noo::map": (imgui.core.input_text, ["{dict}", "{}", 256]),
     "noo::any_id": (imgui.core.input_int2, ["Id", 0, 0]),
@@ -35,19 +36,21 @@ HINT_MAP = {
     "noo::range(a,b,c)": (imgui.core.input_float3, ["Range (a->b) step by c", 0, 0, 0]),
 }
 
+
 class Window(mglw.WindowConfig):
-    """Base Window with built in 3D camera support    
+    """Base Window with built-in 3D camera support
     
     Most work happens in the render function which is called every frame
     """
-  
+
     gl_version = (3, 3)
     aspect_ratio = 16 / 9
     resource_dir = Path(__file__).parent.resolve() / 'resources/'
     title = "Tagliatelle Window"
     resizable = True
     client = None
-    #vsync=True
+
+    # vsync=True
     # MATCH SCREEN RATE
 
     def __init__(self, **kwargs):
@@ -60,13 +63,13 @@ class Window(mglw.WindowConfig):
         self.camera.velocity = 1.0
         self.camera.zoom = 2.5
         self.camera_position = None
-        
+
         # Window Options
         self.wnd.mouse_exclusivity = True
         self.camera_enabled = True
-        
+
         # Store Light Info
-        self.lights = {} # light_id: light_info
+        self.lights = {}  # light_id: light_info
 
         # Create scene and set up basic nodes
         self.scene = mglw.scene.Scene("Noodles Scene")
@@ -74,7 +77,7 @@ class Window(mglw.WindowConfig):
         root.matrix_global = np.identity(4, np.float32)
         self.scene.root_nodes.append(root)
         self.scene.cameras.append(self.camera)
-        
+
         # Store shader settings
         self.shininess = DEFAULT_SHININESS
         self.spec_strength = DEFAULT_SPEC_STRENGTH
@@ -83,7 +86,6 @@ class Window(mglw.WindowConfig):
         imgui.create_context()
         self.impl = create_renderer(self.wnd._window)
         self.args = {}
-
 
     def key_event(self, key, action, modifiers):
 
@@ -137,7 +139,6 @@ class Window(mglw.WindowConfig):
         except queue.Empty:
             pass
 
-
     def update_gui(self):
 
         imgui.new_frame()
@@ -152,7 +153,7 @@ class Window(mglw.WindowConfig):
                 )
 
                 if clicked_quit:
-                    exit(1) # Need to hook this up to window
+                    exit(1)  # Need to hook this up to window
 
                 imgui.end_menu()
 
@@ -160,13 +161,14 @@ class Window(mglw.WindowConfig):
 
         # State Inspector
         imgui.begin("State")
-        for specifier in state:
+        for id_type in penne.id_map.values():
 
-            expanded, visible = imgui.collapsing_header(specifier, visible=True)
-            if not expanded or specifier == "document":
+            expanded, visible = imgui.collapsing_header(f"{id_type}", visible=True)
+            if not expanded:
                 continue
 
-            for id, delegate in state[specifier].items():
+            select_components = [component for id, component in state.items() if type(id) is id_type]
+            for delegate in select_components:
                 delegate.gui_rep()
         imgui.end()
 
@@ -177,47 +179,45 @@ class Window(mglw.WindowConfig):
         imgui.end()
 
         # Methods
-        self.render_methods()
+        methods = [component for id, component in state.items() if type(id) is penne.MethodID]
+        self.render_methods(methods)
 
         # Shader Settings
         shininess = self.shininess
         spec = self.spec_strength
         imgui.begin("Shader")
-        changed, shininess = imgui.slider_float("Shininess", shininess, 0.0, 100.0, format="%.0f", power=1)
+        changed, shininess = imgui.slider_float("Shininess", shininess, 0.0, 100.0, format="%.0f", power=1.0)
         if changed:
             self.shininess = shininess
 
-        changed, spec = imgui.slider_float("Specular Strength", spec, 0.0, 1.0, power=1)
+        changed, spec = imgui.slider_float("Specular Strength", spec, 0.0, 1.0, power=1.0)
         if changed:
             self.spec_strength = spec
         imgui.end()
 
-
-    def render_methods(self):
+    def render_methods(self, methods):
         # Methods
         imgui.begin("Methods")
-        state = self.client.state
-        for id, delegate in state["methods"].items():
+        for delegate in methods:
             imgui.begin_group()
-            
+
             if imgui.button(f"Invoke {delegate.name}"):
-                if delegate.info.arg_doc == []:
+                if not delegate.arg_doc:
                     self.client.invoke_method(delegate.name, [])
                 else:
                     imgui.open_popup(f"Invoke {id}")
             imgui.core.push_text_wrap_pos()
-            imgui.text(f"Docs: {delegate.docs}")
+            imgui.text(f"Docs: {delegate.doc}")
             imgui.core.pop_text_wrap_pos()
             imgui.separator()
-
 
             if imgui.begin_popup(f"Invoke {id}"):
 
                 imgui.text("Input Arguments")
                 imgui.separator()
-                for arg in delegate.info.arg_doc:
+                for arg in delegate.arg_doc:
                     imgui.text(arg.name.upper())
-                    
+
                     # Get input block from state or get default
                     if arg.name in self.args:
                         component, parameters, vals = self.args[arg.name]
@@ -225,7 +225,7 @@ class Window(mglw.WindowConfig):
                         try:
                             hint = arg.editor_hint if hasattr(arg, "editor_hint") else "noo::any"
                             component, parameters, vals = HINT_MAP[hint]
-                        except:
+                        except Exception:
                             raise Exception(f"Invalid Hint for {arg.name} arg")
 
                     label, rest = parameters[0], parameters[1:]
@@ -237,7 +237,7 @@ class Window(mglw.WindowConfig):
                     self.args[arg.name] = (component, parameters, values)
                     imgui.text(arg.doc)
                     imgui.separator()
-                
+
                 if imgui.button("Submit"):
 
                     # Get vals and convert type if applicable
@@ -246,7 +246,7 @@ class Window(mglw.WindowConfig):
                         value = arg[2]
                         try:
                             clean_val = json.loads(value)
-                        except:
+                        except Exception:
                             clean_val = value
                         final_vals.append(clean_val)
 
