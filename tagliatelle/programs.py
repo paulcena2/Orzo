@@ -44,7 +44,6 @@ class PhongProgram(MeshProgram):
         texture.repeat_x, texture.repeat_y = False, False
         self.default_texture = texture
 
-
     def draw(
         self,
         mesh,

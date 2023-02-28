@@ -167,8 +167,8 @@ class EntityDelegate(Entity):
             )
 
             # Update State
-            if id not in window.lights:
-                window.lights[id] = light_info
+            if light_id not in window.lights:
+                window.lights[light_id] = light_info
 
     def remove_lights(self, window):
         """Callback for removing lights from state"""

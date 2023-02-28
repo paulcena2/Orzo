@@ -10,6 +10,7 @@ from imgui.integrations.pyglet import create_renderer
 
 import penne
 
+
 DEFAULT_SHININESS = 10.0
 DEFAULT_SPEC_STRENGTH = 0.2
 
@@ -34,6 +35,24 @@ HINT_MAP = {
     "noo::buffer_id": (imgui.core.input_int2, ["Buffer Id", 0, 0]),
     "noo::bufferview_id": (imgui.core.input_int2, ["Buffer View Id", 0, 0]),
     "noo::range(a,b,c)": (imgui.core.input_float3, ["Range (a->b) step by c", 0, 0, 0]),
+}
+
+
+SPECIFIER_MAP = {
+    penne.MethodID: "Methods",
+    penne.SignalID: "Signals",
+    penne.TableID: "Tables",
+    penne.PlotID: "Plots",
+    penne.EntityID: "Entities",
+    penne.MaterialID: "Materials",
+    penne.GeometryID: "Geometries",
+    penne.LightID: "Lights",
+    penne.ImageID: "Images",
+    penne.TextureID: "Textures",
+    penne.SamplerID: "Samplers",
+    penne.BufferID: "Buffers",
+    penne.BufferViewID: "Buffer Views",
+    None: "Document"
 }
 
 
@@ -163,7 +182,7 @@ class Window(mglw.WindowConfig):
         imgui.begin("State")
         for id_type in penne.id_map.values():
 
-            expanded, visible = imgui.collapsing_header(f"{id_type}", visible=True)
+            expanded, visible = imgui.collapsing_header(f"{SPECIFIER_MAP[id_type]}", visible=True)
             if not expanded:
                 continue
 
