@@ -826,4 +826,7 @@ class BufferViewDelegate(BufferView):
                                                     visible=True)
         if expanded:
             self.buffer_delegate.gui_rep()
+            imgui.text(f"Type: {self.type}")
+            imgui.text(f"Offset: {self.offset}")
+            imgui.text(f"Length: {self.length}")
         imgui.unindent()
