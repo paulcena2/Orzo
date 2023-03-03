@@ -9,10 +9,11 @@ if TYPE_CHECKING:
 
 import io
 import urllib.request
+import json
 
 from . import programs
 
-from penne.delegates import *
+from penne import *
 
 import moderngl_window as mglw
 import moderngl
@@ -49,6 +50,30 @@ MODE_MAP = {
     "TRIANGLE_STRIP": moderngl.TRIANGLE_STRIP
 }
 
+# Editor hint -> gui component, parameters to gui component, default values for the input
+HINT_MAP = {
+    "noo::any": (imgui.core.input_text, ("Any", 256), ""),
+    "noo::text": (imgui.core.input_text, ("Text", 256), ""),
+    "noo::integer": (imgui.core.input_int, "Int", ""),
+    "noo::real": (imgui.core.input_float, "Real", 1.0),
+    "noo::array": (imgui.core.input_text, ["[Array]", 256], ["[]"]),
+    "noo::map": (imgui.core.input_text, ["{dict}", "{}", 256]),
+    "noo::any_id": (imgui.core.input_int2, ["Id"], [0, 0]),
+    "noo::entity_id": (imgui.core.input_int2, ["Entity Id"], [0, 0]),
+    "noo::table_id": (imgui.core.input_int2, ["Table Id"], [0, 0]),
+    "noo::plot_id": (imgui.core.input_int2, ["Plot Id"], [0, 0]),
+    "noo::method_id": (imgui.core.input_int2, ["Method Id"], [0, 0]),
+    "noo::signal_id": (imgui.core.input_int2, ["Signal Id"], [0, 0]),
+    "noo::image_id": (imgui.core.input_int2, ["Image Id"], [0, 0]),
+    "noo::sampler_id": (imgui.core.input_int2, ["Sampler Id"], [0, 0]),
+    "noo::texture_id": (imgui.core.input_int2, ["Texture Id"], [0, 0]),
+    "noo::material_id": (imgui.core.input_int2, ["Material Id"], [0, 0]),
+    "noo::light_id": (imgui.core.input_int2, ["Light Id"], [0, 0]),
+    "noo::buffer_id": (imgui.core.input_int2, ["Buffer Id"], [0, 0]),
+    "noo::bufferview_id": (imgui.core.input_int2, ["Buffer View Id"], [0, 0]),
+    "noo::range(a,b,c)": (imgui.core.input_float3, ["Range (a->b) step by c", 0, 0, 0]),
+}
+
 
 class MethodDelegate(Method):
     """Delegate representing a method which can be invoked on the server
@@ -57,10 +82,73 @@ class MethodDelegate(Method):
         client (client object): 
             client delegate is a part of
     """
+    current_args = {}
 
     def gui_rep(self):
         """Representation to be displayed in GUI"""
-        imgui.text(f"{self}")
+        imgui.text(self.name)
+
+    def invoke_rep(self, on_delegate=None):
+
+        # Main Method Rep
+        if imgui.button(f"Invoke {self.name}"):
+
+            # Invoke method if no args, otherwise open popup for arg input
+            if self.arg_doc:
+                imgui.open_popup(f"Invoke {self.name}")
+            else:
+                self.client.invoke_method(self.name, [])
+
+        # Add more description to main window
+        imgui.core.push_text_wrap_pos()
+        imgui.text(f"Docs: {self.doc}")
+        imgui.core.pop_text_wrap_pos()
+        imgui.separator()
+
+        # Popup window
+        if imgui.begin_popup(f"Invoke {self.name}"):
+
+            imgui.text("Input Arguments")
+            imgui.separator()
+            for arg in self.arg_doc:
+                imgui.text(arg.name.upper())
+
+                # Get input block from state or get default vals from map
+                component, parameters, vals = self.current_args.get(arg.name, (None, None, None))
+                if not component:
+                    try:
+                        hint = arg.editor_hint if arg.editor_hint else "noo::any"
+                        component, parameters, vals = HINT_MAP[hint]
+                    except Exception:
+                        raise Exception(f"Invalid Hint for {arg.name} arg")
+
+                # Render GUI component from parameters and vals
+                label, rest = parameters[0], parameters[1:]
+                if isinstance(vals, list):
+                    changed, values = component(label, *vals, *rest)
+                else:
+                    changed, values = component(f"{label} for {arg.name}", vals, *rest)
+
+                self.current_args[arg.name] = (component, parameters, values)
+                imgui.text(arg.doc)
+                imgui.separator()
+
+            if imgui.button("Submit"):
+
+                # Get vals and convert type if applicable
+                final_vals = []
+                for arg in self.current_args.values():
+                    value = arg[2]
+                    try:
+                        clean_val = json.loads(value)
+                    except Exception:
+                        clean_val = value
+                    final_vals.append(clean_val)
+
+                context = get_context(on_delegate)
+                print(f"Invoking the method: {self.name} w/ args: {final_vals}")
+                self.client.invoke_method(self.name, final_vals, context=context)
+            imgui.end_popup()
 
 
 class SignalDelegate(Signal):
@@ -79,7 +167,7 @@ class SignalDelegate(Signal):
 
     def gui_rep(self):
         """Representation to be displayed in GUI"""
-        imgui.text(f"{self}")
+        imgui.text(f"{self.name}")
 
 
 class TableDelegate(Table):
@@ -101,16 +189,41 @@ class TableDelegate(Table):
             id group for delegate in state and table on server
     """
 
+    method_delegates = []
+    signal_delegates = []
+
+    def on_new(self, message: dict):
+        self.method_delegates = [self.client.get_component(id) for id in self.methods_list]
+        self.signal_delegates = [self.client.get_component(id) for id in self.signals_list]
+
     def gui_rep(self):
         """Representation to be displayed in GUI"""
-        imgui.text(f"{self}")
+        imgui.indent()
+        expanded, visible = imgui.collapsing_header(f"{self.name} {self.id.slot, self.id.gen}", visible=True)
+        if not expanded:
+            imgui.unindent()
+            return
+
+        imgui.text(f"Attached Methods: {self.methods_list}")
+        if self.method_delegates:
+            for method in self.method_delegates:
+                method.invoke_rep(self)
+
+        imgui.text(f"Attached Signals: {self.signals_list}")
+        if self.signal_delegates:
+            for signal in self.signal_delegates:
+                signal.gui_rep()
+        imgui.unindent()
 
 
 class DocumentDelegate(Document):
 
     def gui_rep(self):
         """Representation to be displayed in GUI"""
-        imgui.text(f"{self}")
+        imgui.text(f"{self.name}")
+        imgui.text("Methods")
+        for method in self.methods_list:
+            self.client.get_component(method).gui_rep()
 
 
 class EntityDelegate(Entity):
@@ -130,6 +243,7 @@ class EntityDelegate(Entity):
     method_delegates: list[MethodDelegate] = None
     signal_delegates: list[SignalDelegate] = None
     table_delegate: TableDelegate = None
+    num_instances: int = 0
 
     def render_entity(self, window):
         """Render the mesh associated with this delegate
@@ -140,13 +254,8 @@ class EntityDelegate(Entity):
         # Prepare Mesh
         geometry = self.client.get_component(self.render_rep.mesh)
         self.geometry_delegate = geometry
-        patches = geometry.patches
         instances = self.render_rep.instances
-
-        # Render Each Patch Using Geometry Delegate
-        for patch in patches:
-            node = geometry.render_patch(patch, instances, window)
-            self.nodes.append(node)
+        geometry.render(instances, window)
 
     def attach_lights(self, window):
         """Callback to handle lights attached to an entity"""
@@ -230,37 +339,64 @@ class EntityDelegate(Entity):
     def gui_rep(self):
         """Representation to be displayed in GUI"""
         imgui.indent()
-        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
-        if expanded:
-            if self.geometry_delegate:
-                self.geometry_delegate.gui_rep()
-            if self.table_delegate:
-                self.table_delegate.gui_rep()
-            if self.light_delegates:
-                for light in self.light_delegates:
-                    light.gui_rep()
-            if self.method_delegates:
-                for method in self.method_delegates:
-                    method.gui_rep()
-            if self.signal_delegates:
-                for signal in self.signal_delegates:
-                    signal.gui_rep()
+        expanded, visible = imgui.collapsing_header(f"{self.name} {self.id.slot, self.id.gen}", visible=True)
+        if not expanded:
+            imgui.unindent()
+            return
+
+        if self.geometry_delegate:
+            self.geometry_delegate.gui_rep()
+            if self.render_rep.instances:
+                self.client.get_component(self.render_rep.instances.view).gui_rep()
+            imgui.text(f"Num Instances: {self.num_instances}")
+        if self.table_delegate:
+            self.table_delegate.gui_rep()
+        if self.light_delegates:
+            for light in self.light_delegates:
+                light.gui_rep()
+
+        imgui.text(f"Attached Methods: {self.methods_list}")
+        if self.method_delegates:
+            for method in self.method_delegates:
+                method.invoke_rep(self)
+
+        imgui.text(f"Attached Signals: {self.signals_list}")
+        if self.signal_delegates:
+            for signal in self.signal_delegates:
+                signal.gui_rep()
         imgui.unindent()
 
 
 class PlotDelegate(Plot):
 
+    method_delegates = []
+    signal_delegates = []
+
+    def on_new(self, message: dict):
+        self.method_delegates = [self.client.get_component(id) for id in self.methods_list]
+        self.signal_delegates = [self.client.get_component(id) for id in self.signals_list]
+
     def gui_rep(self):
         """Representation to be displayed in GUI"""
-        imgui.text(f"{self}")
+        imgui.indent()
+        expanded, visible = imgui.collapsing_header(f"{self.name} {self.id.slot, self.id.gen}", visible=True)
+        if not expanded:
+            imgui.unindent()
+            return
+
+        imgui.text(f"Attached Methods: {self.methods_list}")
+        if self.method_delegates:
+            for method in self.method_delegates:
+                method.invoke_rep(self)
+
+        imgui.text(f"Attached Signals: {self.signals_list}")
+        if self.signal_delegates:
+            for signal in self.signal_delegates:
+                signal.gui_rep()
+        imgui.unindent()
 
 
 class GeometryDelegate(Geometry):
-
-    material: MaterialDelegate = None
-    instance_view: BufferViewDelegate = None
-    num_instances: int = 0
-    buffer_view: BufferViewDelegate = None
 
     @staticmethod
     def reformat_attr(attr: Attribute):
@@ -292,29 +428,55 @@ class GeometryDelegate(Geometry):
 
         return " ".join(formats), norm_factor
 
+    def render(self, instances, window):
+
+        # Render each patch using the instances
+        nodes = []
+        num_instances = 0
+        for patch in self.patches:
+            node, num_instances = self.render_patch(patch, instances, window)
+            nodes.append(node)
+        return nodes, num_instances
+
     def render_patch(self, patch, instances, window):
 
         scene = window.scene
 
+        # Initialize VAO to store buffers and indices for this patch
+        vao = mglw.opengl.vao.VAO(name=f"{self.name} Patch VAO", mode=MODE_MAP[patch.type])
+
         # Get Material - for now material delegate uses default texture
         material = self.client.get_component(patch.material)
-        self.material = material
         scene.materials.append(material.mglw_material)
 
         # Reformat attributes
         noodle_attributes = patch.attributes
         new_attributes = {attr.semantic: GeometryDelegate.reformat_attr(attr) for attr in noodle_attributes}
 
-        # Construct vertex array object from buffer and buffer view
-        view = self.buffer_view
-        buffer = view.buffer_delegate
-        index_offset = patch.indices.offset
-        buffer_format, norm_factor = GeometryDelegate.construct_format_str(noodle_attributes)
-        vao = mglw.opengl.vao.VAO(name=f"{self.name} Patch VAO", mode=MODE_MAP[patch.type])
-        vao.buffer(buffer.bytes[:index_offset], buffer_format, [info["name"] for info in new_attributes.values()])
-
-        index_bytes, index_size = buffer.bytes[index_offset:], FORMAT_MAP[patch.indices.format].size
+        # Get Index Bytes and Size to use later in vao
+        index = patch.indices
+        index_view = self.client.get_component(index.view)
+        index_bytes = index_view.buffer_delegate.bytes[index.offset:]
+        index_size = FORMAT_MAP[index.format].size
         vao.index_buffer(index_bytes, index_size)
+
+        # Construct vertex array object from attribute buffers and buffer views
+        buffer_groups = {}
+        for attribute in patch.attributes:
+            buffer_groups.setdefault(attribute.view, []).append(attribute)
+
+        # Create a vertex array buffer for each group of attributes
+        for view_id, attributes in buffer_groups.items():
+
+            # Get Bytes from the view
+            vertex_view = self.client.get_component(view_id)
+            buffer = vertex_view.buffer_delegate
+            vertex_bytes = buffer.bytes[:index.offset] if index_view == vertex_view else buffer.bytes
+
+            # Format attributes for mglw, and add to vao
+            buffer_format, norm_factor = GeometryDelegate.construct_format_str(noodle_attributes)
+            attr_names = [new_attributes[attribute.semantic]["name"] for attribute in attributes]
+            vao.buffer(vertex_bytes, buffer_format, attr_names)
 
         # Add default attributes for those that are missing
         if "COLOR" not in new_attributes:
@@ -340,13 +502,12 @@ class GeometryDelegate(Geometry):
         # Add instances to vao if applicable, also add appropriate mesh program
         if instances:
             instance_view = self.client.get_component(instances.view)
-            self.instance_view = instance_view
             instance_buffer = instance_view.buffer_delegate
             instance_bytes = instance_buffer.bytes
             vao.buffer(instance_bytes, '16f/i', 'instance_matrix')
 
-            self.num_instances = int(instance_buffer.size / 64)  # 16 4 byte floats per instance
-            mesh.mesh_program = programs.PhongProgram(window, self.num_instances)
+            num_instances = int(instance_buffer.size / 64)  # 16 4 byte floats per instance
+            mesh.mesh_program = programs.PhongProgram(window, num_instances)
 
             # For debugging, instances...
             # instance_list = np.frombuffer(instance_bytes, np.single).tolist()
@@ -360,7 +521,7 @@ class GeometryDelegate(Geometry):
             # print(f"Instance rendering rotations: \n{rotations}")
 
         else:
-            self.num_instances = 0
+            num_instances = 0
             mesh.mesh_program = programs.PhongProgram(window, num_instances=-1)
 
         # Add mesh as new node to scene graph
@@ -370,29 +531,61 @@ class GeometryDelegate(Geometry):
         new_mesh_node.matrix_global = root.matrix_global
         root.add_child(new_mesh_node)
         window.scene.nodes.append(new_mesh_node)
-        return new_mesh_node
+        return new_mesh_node, num_instances
 
-    def on_new(self, message: dict):
+    # def on_new(self, message: dict):
 
         # assuming all attrs use same view
-        first_patch_attrs = self.patches[0].attributes
-        view_id = first_patch_attrs[0].view
-        self.buffer_view = self.client.get_component(view_id)
+        # first_patch_attrs = self.patches[0].attributes
+        # view_id = first_patch_attrs[0].view
+        # self.buffer_view = self.client.get_component(view_id)
 
     def on_remove(self, message: dict):
         pass
 
+    def patch_gui_rep(self, patch: GeometryPatch):
+        """Rep for patches to be nested in GUI"""
+        imgui.text("Attributes")
+        for attribute in patch.attributes:
+            imgui.indent()
+            imgui.text(attribute.semantic)
+            imgui.text(f"From buffer {attribute.view}")
+            expanded, visible = imgui.collapsing_header(f"More Info for {attribute.semantic}", visible=True)
+            if expanded:
+                imgui.text(f"Channel: {attribute.channel}")
+                imgui.text(f"Offset: {attribute.offset}")
+                imgui.text(f"Stride: {attribute.stride}")
+                imgui.text(f"Format: {attribute.format}")
+                imgui.text(f"Min Value: {attribute.minimum_value}")
+                imgui.text(f"Max Value: {attribute.maximum_value}")
+                imgui.text(f"Normalized: {attribute.normalized}")
+            imgui.unindent()
+
+        imgui.separator()
+        imgui.text("Index Info")
+        index = patch.indices
+        index_view = self.client.get_component(index.view)
+        index_view.gui_rep()
+        imgui.text(f"Count: {index.count}")
+        imgui.text(f"Offset: {index.offset}")
+        imgui.text(f"Stride: {index.stride}")
+        imgui.text(f"Format: {index.format}")
+        imgui.separator()
+
+        if patch.material:
+            self.client.get_component(patch.material).gui_rep()
+
     def gui_rep(self):
         """Representation to be displayed in GUI"""
         imgui.indent()
-        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        expanded, visible = imgui.collapsing_header(f"{self.name} {self.id.slot, self.id.gen}", visible=True)
         if expanded:
-            self.buffer_view.gui_rep()
-            if self.material:
-                self.material.gui_rep()
-            if self.instance_view:
-                self.instance_view.gui_rep("Instances - ")
-            imgui.text(f"Num Instances: {self.num_instances}")
+
+            imgui.indent()
+            for patch in self.patches:
+                self.patch_gui_rep(patch)
+            imgui.unindent()
+
         imgui.unindent()
 
 
@@ -401,22 +594,10 @@ class LightDelegate(Light):
 
     light_basics: dict = {}
 
-    @staticmethod
-    def format_color(color):
-        """Helper to reformat colors to rgba floats"""
-
-        formatted = [*color]
-        if len(formatted) == 3:
-            formatted.append(1.0)
-        if color[0] > 1 or color[1] > 1 or color[2] > 1:
-            for i in range(3):
-                formatted[i] /= 255
-        return tuple(formatted)
-
     def on_new(self, message: dict):
 
         # Add info based on light type
-        color = self.format_color(message.color) if hasattr(message, "color") else (1.0, 1.0, 1.0, 10)
+        color = self.color
         if self.point:
             light_type = 0
             info = (self.intensity, self.point.range, 0.0, 0.0)
@@ -429,7 +610,7 @@ class LightDelegate(Light):
 
         # Arrange info into dict to store
         self.light_basics = {
-            "color": color,
+            "color": color.as_rgb_tuple(alpha=True),
             "ambient": (.1, .1, .1),
             "type": light_type,
             "info": info,
@@ -438,7 +619,7 @@ class LightDelegate(Light):
     def gui_rep(self):
         """Representation to be displayed in GUI"""
         imgui.indent()
-        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        expanded, visible = imgui.collapsing_header(f"{self.name} {self.id.slot, self.id.gen}", visible=True)
         if expanded:
             for key, val in self.light_basics.items():
                 imgui.text(f"{key.upper()}: {val}")
@@ -472,7 +653,7 @@ class MaterialDelegate(Material):
     def on_new(self, message: dict):
         """"Create mglw_material from noodles message"""
 
-        self.color = self.pbr_info.base_color
+        self.color = self.pbr_info.base_color.as_rgb_tuple(alpha=True)
 
         material = mglw.scene.Material(f"{self.name}")
         material.color = self.color
@@ -487,7 +668,7 @@ class MaterialDelegate(Material):
     def gui_rep(self):
         """Representation to be displayed in GUI"""
         imgui.indent()
-        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        expanded, visible = imgui.collapsing_header(f"{self.name} {self.id.slot, self.id.gen}", visible=True)
         if expanded:
             imgui.text(f"Color: {self.color}")
             self.texture_delegate.gui_rep() if self.texture_delegate else imgui.text(f"No Texture")
@@ -509,7 +690,7 @@ class ImageDelegate(Image):
 
         # Get Bytes from either source present
         if self.buffer_source:
-            buffer = self.client.get_component(self.buffer_source).buffer_delegate
+            buffer = self.client.get_component(self.buffer_source)
             im = img.open(io.BytesIO(buffer.bytes))
             im = im.transpose(img.FLIP_TOP_BOTTOM)
             self.size = im.size
@@ -523,7 +704,7 @@ class ImageDelegate(Image):
         """Representation to be displayed in GUI"""
 
         imgui.indent()
-        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        expanded, visible = imgui.collapsing_header(f"{self.name} {self.id.slot, self.id.gen}", visible=True)
         if expanded:
             imgui.image(self.texture_id, *self.size)
             imgui.text(f"Size: {self.size}")
@@ -541,7 +722,7 @@ class TextureDelegate(Texture):
         image = self.client.get_component(self.image)
         self.image_delegate = image
         self.mglw_texture = window.ctx.texture(image.size, image.components, image.bytes)
-        self.image.texture_id = self.mglw_texture.glo
+        self.image_delegate.texture_id = self.mglw_texture.glo
 
     def on_new(self, message: dict):
 
@@ -553,7 +734,7 @@ class TextureDelegate(Texture):
     def gui_rep(self):
         """Representation to be displayed in GUI"""
         imgui.indent()
-        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        expanded, visible = imgui.collapsing_header(f"{self.name} {self.id.slot, self.id.gen}", visible=True)
         if expanded:
             self.image_delegate.gui_rep()
             self.sampler_delegate.gui_rep() if self.sampler else imgui.text(f"No Sampler")
@@ -562,8 +743,6 @@ class TextureDelegate(Texture):
 
 class SamplerDelegate(Sampler):
 
-    min_filter: int = None
-    mag_filter: int = None
     rep_x: bool = None
     rep_y: bool = None
     mglw_sampler: moderngl.Sampler = None
@@ -581,14 +760,12 @@ class SamplerDelegate(Sampler):
     }
 
     def set_up_sampler(self, window):
-        self.min_filter = self.FILTER_MAP[self.min_filter]
-        self.mag_filter = self.FILTER_MAP[self.mag_filter]
 
         self.rep_x = self.SAMPLER_MODE_MAP[self.wrap_s]
         self.rep_y = self.SAMPLER_MODE_MAP[self.wrap_t]
 
         self.mglw_sampler = window.ctx.sampler(
-            filter=(self.min_filter, self.mag_filter),
+            filter=(self.FILTER_MAP[self.min_filter], self.FILTER_MAP[self.mag_filter]),
             repeat_x=self.rep_x,
             repeat_y=self.rep_y,
             repeat_z=False
@@ -600,7 +777,7 @@ class SamplerDelegate(Sampler):
     def gui_rep(self):
         """Representation to be displayed in GUI"""
         imgui.indent()
-        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        expanded, visible = imgui.collapsing_header(f"{self.name} {self.id.slot, self.id.gen}", visible=True)
         if expanded:
             imgui.text(f"Min Filter: {self.min_filter}")
             imgui.text(f"Mag Filter: {self.mag_filter}")
@@ -627,7 +804,7 @@ class BufferDelegate(Buffer):
     def gui_rep(self):
         """Representation to be displayed in GUI"""
         imgui.indent()
-        expanded, visible = imgui.collapsing_header(f"{self}", visible=True)
+        expanded, visible = imgui.collapsing_header(f"{self.name} {self.id.slot, self.id.gen}", visible=True)
         if expanded:
             imgui.text(f"Size: {self.size} bytes")
             imgui.text(f"Bytes: {self.bytes[:4]}...{self.bytes[-4:]}")
@@ -645,7 +822,8 @@ class BufferViewDelegate(BufferView):
     def gui_rep(self, description=""):
         """Representation to be displayed in GUI"""
         imgui.indent()
-        expanded, visible = imgui.collapsing_header(f"{description}{self}", visible=True)
+        expanded, visible = imgui.collapsing_header(f"{description}{self.name} {self.id.slot, self.id.gen}",
+                                                    visible=True)
         if expanded:
             self.buffer_delegate.gui_rep()
         imgui.unindent()

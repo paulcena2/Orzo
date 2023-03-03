@@ -23,12 +23,12 @@ del_hash = {
 
 def start():
     # Create Client and start rendering loop
-    client = penne.create_client("ws://localhost:50000", del_hash)
-    Window.client = client
+    render_client = penne.create_client("ws://localhost:50000", del_hash)
+    Window.client = render_client
     Window.run()
 
     # Shutdown and wait for client thread to finish
-    client.shutdown()
+    render_client.shutdown()
     print(f"Finished Testing")
 
 

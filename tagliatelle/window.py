@@ -3,7 +3,6 @@ import moderngl
 import numpy as np
 from pathlib import Path
 import queue
-import json
 
 import imgui
 from imgui.integrations.pyglet import create_renderer
@@ -13,30 +12,6 @@ import penne
 
 DEFAULT_SHININESS = 10.0
 DEFAULT_SPEC_STRENGTH = 0.2
-
-HINT_MAP = {
-    "noo::any": (imgui.core.input_text, ("Any", 256), ""),
-    "noo::text": (imgui.core.input_text, ("Text", 256), ""),
-    "noo::integer": (imgui.core.input_int, "Int", ""),
-    "noo::real": (imgui.core.input_float, "Real", 1.0),
-    "noo::array": (imgui.core.input_text, ["[Array]", 256], ["[]"]),
-    "noo::map": (imgui.core.input_text, ["{dict}", "{}", 256]),
-    "noo::any_id": (imgui.core.input_int2, ["Id", 0, 0]),
-    "noo::entity_id": (imgui.core.input_int2, ["Entity Id"], [0, 0]),
-    "noo::table_id": (imgui.core.input_int2, ["Table Id", 0, 0]),
-    "noo::plot_id": (imgui.core.input_int2, ["Plot Id", 0, 0]),
-    "noo::method_id": (imgui.core.input_int2, ["Method Id", 0, 0]),
-    "noo::signal_id": (imgui.core.input_int2, ["Signal Id", 0, 0]),
-    "noo::image_id": (imgui.core.input_int2, ["Image Id", 0, 0]),
-    "noo::sampler_id": (imgui.core.input_int2, ["Sampler Id", 0, 0]),
-    "noo::texture_id": (imgui.core.input_int2, ["Texture Id", 0, 0]),
-    "noo::material_id": (imgui.core.input_int2, ["Material Id", 0, 0]),
-    "noo::light_id": (imgui.core.input_int2, ["Light Id", 0, 0]),
-    "noo::buffer_id": (imgui.core.input_int2, ["Buffer Id", 0, 0]),
-    "noo::bufferview_id": (imgui.core.input_int2, ["Buffer View Id", 0, 0]),
-    "noo::range(a,b,c)": (imgui.core.input_float3, ["Range (a->b) step by c", 0, 0, 0]),
-}
-
 
 SPECIFIER_MAP = {
     penne.MethodID: "Methods",
@@ -163,19 +138,28 @@ class Window(mglw.WindowConfig):
         imgui.new_frame()
         state = self.client.state
 
+        # Shader Settings
+        shininess = self.shininess
+        spec = self.spec_strength
+        imgui.begin("Shader")
+        changed, shininess = imgui.slider_float("Shininess", shininess, 0.0, 100.0, format="%.0f", power=1.0)
+        if changed:
+            self.shininess = shininess
+
+        changed, spec = imgui.slider_float("Specular Strength", spec, 0.0, 1.0, power=1.0)
+        if changed:
+            self.spec_strength = spec
+        imgui.end()
+
         # Main Menu
         if imgui.begin_main_menu_bar():
             if imgui.begin_menu("File", True):
 
-                clicked_quit, selected_quit = imgui.menu_item(
-                    "Quit", 'Cmd+Q', False, True
-                )
+                clicked_quit, selected_quit = imgui.menu_item("Quit", 'Cmd+Q', False, True)
 
                 if clicked_quit:
                     exit(1)  # Need to hook this up to window
-
                 imgui.end_menu()
-
             imgui.end_main_menu_bar()
 
         # State Inspector
@@ -197,81 +181,18 @@ class Window(mglw.WindowConfig):
         imgui.text(f"Press 'Space' to toggle camera/GUI")
         imgui.end()
 
-        # Methods
-        methods = [component for id, component in state.items() if type(id) is penne.MethodID]
-        self.render_methods(methods)
+        # Render Document Methods and Signals
+        imgui.begin("Document")
+        document = state["document"]
+        imgui.text(f"Methods")
+        imgui.separator()
+        for method_id in document.methods_list:
+            method = self.client.get_component(method_id)
+            method.invoke_rep()
 
-        # Shader Settings
-        shininess = self.shininess
-        spec = self.spec_strength
-        imgui.begin("Shader")
-        changed, shininess = imgui.slider_float("Shininess", shininess, 0.0, 100.0, format="%.0f", power=1.0)
-        if changed:
-            self.shininess = shininess
-
-        changed, spec = imgui.slider_float("Specular Strength", spec, 0.0, 1.0, power=1.0)
-        if changed:
-            self.spec_strength = spec
-        imgui.end()
-
-    def render_methods(self, methods):
-        # Methods
-        imgui.begin("Methods")
-        for delegate in methods:
-            imgui.begin_group()
-
-            if imgui.button(f"Invoke {delegate.name}"):
-                if not delegate.arg_doc:
-                    self.client.invoke_method(delegate.name, [])
-                else:
-                    imgui.open_popup(f"Invoke {id}")
-            imgui.core.push_text_wrap_pos()
-            imgui.text(f"Docs: {delegate.doc}")
-            imgui.core.pop_text_wrap_pos()
-            imgui.separator()
-
-            if imgui.begin_popup(f"Invoke {id}"):
-
-                imgui.text("Input Arguments")
-                imgui.separator()
-                for arg in delegate.arg_doc:
-                    imgui.text(arg.name.upper())
-
-                    # Get input block from state or get default
-                    if arg.name in self.args:
-                        component, parameters, vals = self.args[arg.name]
-                    else:
-                        try:
-                            hint = arg.editor_hint if hasattr(arg, "editor_hint") else "noo::any"
-                            component, parameters, vals = HINT_MAP[hint]
-                        except Exception:
-                            raise Exception(f"Invalid Hint for {arg.name} arg")
-
-                    label, rest = parameters[0], parameters[1:]
-                    if isinstance(vals, list):
-                        changed, values = component(label, *vals, *rest)
-                    else:
-                        changed, values = component(f"{label} for {arg.name}", vals, *rest)
-
-                    self.args[arg.name] = (component, parameters, values)
-                    imgui.text(arg.doc)
-                    imgui.separator()
-
-                if imgui.button("Submit"):
-
-                    # Get vals and convert type if applicable
-                    final_vals = []
-                    for arg in self.args.values():
-                        value = arg[2]
-                        try:
-                            clean_val = json.loads(value)
-                        except Exception:
-                            clean_val = value
-                        final_vals.append(clean_val)
-
-                    print(f"Invoking the method: {delegate.name} w/ args: {final_vals}")
-                    self.client.invoke_method(delegate.name, final_vals)
-                imgui.end_popup()
-            imgui.end_group()
-
+        imgui.text(f"Signals")
+        imgui.separator()
+        for signal_id in document.signals_list:
+            signal = self.client.get_component(signal_id)
+            signal.gui_rep()
         imgui.end()
