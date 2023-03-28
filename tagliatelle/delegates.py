@@ -235,7 +235,8 @@ class EntityDelegate(Entity):
         name (str): Name of the entity, defaults to 'No-Name Entity'
     """
 
-    nodes = []
+    node: mglw.scene.Node = mglw.scene.Node()
+    patch_nodes = []
     light_delegates: list[LightDelegate] = []
     geometry_delegate: GeometryDelegate = None
     methods_list: Optional[List[MethodID]] = []
@@ -255,10 +256,19 @@ class EntityDelegate(Entity):
         geometry = self.client.get_component(self.render_rep.mesh)
         self.geometry_delegate = geometry
         instances = self.render_rep.instances
-        geometry.render(instances, window)
+        self.patch_nodes, self.num_instances = geometry.render(instances, window, self.transform)
+
+        # Add geometry patch nodes as children to main
+        for node in self.patch_nodes:
+            node.matrix = np.identity(4, np.float)
+            node.matrix_global = self.get_world_transform()
+            self.node.add_child(node)
+            window.scene.nodes.append(node)
 
     def attach_lights(self, window):
         """Callback to handle lights attached to an entity"""
+
+        self.light_delegates = []  # Reset in case of update
         for light_id in self.lights:
 
             # Keep track of light delegates
@@ -279,6 +289,16 @@ class EntityDelegate(Entity):
             if light_id not in window.lights:
                 window.lights[light_id] = light_info
 
+    def update_lights(self, window):
+        """Callback for updating lights on window and delegate"""
+
+        # Remove old lights
+        for light in self.light_delegates:
+            window.lights.remove(light.id)
+
+        # Update with new lights
+        self.client.callback_queue.put((self.attach_lights, []))
+
     def remove_lights(self, window):
         """Callback for removing lights from state"""
 
@@ -288,8 +308,11 @@ class EntityDelegate(Entity):
     def get_world_transform(self):
         """Recursive function to get world transform for an entity"""
 
-        # Swap axis to go from col major -> row major order
-        local_transform = np.array(self.transform).reshape(4, 4).swapaxes(0, 1)
+        if self.transform:
+            # Swap axis to go from col major -> row major order
+            local_transform = np.array(self.transform, np.float32).reshape(4, 4).swapaxes(0, 1)
+        else:
+            local_transform = np.identity(4, np.float32)
 
         if self.parent:
             parent = self.client.get_component(self.parent)
@@ -297,18 +320,57 @@ class EntityDelegate(Entity):
         else:
             return local_transform
 
+    def update_node_transform(self, node: mglw.scene.Node):
+        """Recursive function to update nodes"""
+
+        for child in node.children:
+            node.matrix_global = np.matmul(node.matrix_global, child.matrix)
+            self.update_node_transform(child)
+
     def remove_from_render(self, window):
         """Remove mesh from render"""
 
         # Need to test, enough to remove from render?
         scene = window.scene
-        for node in self.nodes:
-            scene.root_nodes[0].children.remove(node)
-            scene.nodes.remove(node)
-            scene.meshes.remove(node.mesh)
+        if self.parent:
+            parent = self.client.get_component(self.parent)
+            parent.node.children.remove(self.node)
+        else:
+            window.root.children.remove(self.node)
+
+        # Update state in scene
+        scene.nodes.remove(self.node)
+        if self.node.mesh:
+            scene.meshes.remove(self.node.mesh)
+
+        # for node in self.nodes:
+        #     scene.root_nodes[0].children.remove(node)
+        #     scene.nodes.remove(node)
+        #     scene.meshes.remove(node.mesh)
+
+    def set_up_node(self, window):
+
+        self.node.name = f"{self.id}'s Node"
+
+        # Matrices
+        if self.transform:
+            self.node.matrix = np.array(self.transform, np.float32).reshape(4, 4).swapaxes(0, 1)
+        else:
+            self.node.matrix = np.identity(4, np.float32)
+        self.node.matrix_global = self.get_world_transform()
+
+        # Update Scene / State
+        if self.parent:
+            parent = self.client.get_component(self.parent)
+            parent.node.add_child(self.node)
+        else:
+            window.root.add_child(self.node)
+
+        window.scene.nodes.append(self.node)
 
     def on_new(self, message: dict):
 
+        self.client.callback_queue.put((self.set_up_node, []))
         if self.render_rep:
             self.client.callback_queue.put((self.render_entity, []))
 
@@ -320,13 +382,28 @@ class EntityDelegate(Entity):
 
     def on_update(self, message: dict):
 
-        if self.render_rep:
+        # FIX RENDER REP IN ANY CHILD - figure out way to keep track of children and best way to recurse changes
+        # What changes would get passed down? just transform?
+        # probably need to pass that into the mesh in the node's transform
+        if "render_rep" in message:
             self.client.callback_queue.put((self.remove_from_render, []))
             self.client.callback_queue.put((self.render_entity, []))
 
-        if self.lights:
-            self.client.callback_queue.put((self.attach_lights, []))
-            self.client.callback_queue.put((self.remove_lights, []))
+        if "lights" in message:
+            self.client.callback_queue.put((self.update_lights, []))
+
+        # Update attached methods and signals from updated lists
+        if "methods_list" in message:
+            self.method_delegates = [self.client.get_component(id) for id in self.methods_list]
+        if "signals_list" in message:
+            self.signal_delegates = [self.client.get_component(id) for id in self.signals_list]
+
+        # Recursively update mesh transforms if changed
+        if "transform" in message or "parent" in message:
+
+            self.node.matrix = self.transform
+            self.node.matrix_global = self.get_world_transform()
+            self.update_node_transform(self.node)
 
     def on_remove(self, message: dict):
 
@@ -428,17 +505,17 @@ class GeometryDelegate(Geometry):
 
         return " ".join(formats), norm_factor
 
-    def render(self, instances, window):
+    def render(self, instances, window, transform):
 
         # Render each patch using the instances
         nodes = []
         num_instances = 0
         for patch in self.patches:
-            node, num_instances = self.render_patch(patch, instances, window)
+            node, num_instances = self.render_patch(patch, instances, window, transform)
             nodes.append(node)
         return nodes, num_instances
 
-    def render_patch(self, patch, instances, window):
+    def render_patch(self, patch, instances, window, transform=np.identity(4, np.float32)):
 
         scene = window.scene
 
@@ -526,11 +603,11 @@ class GeometryDelegate(Geometry):
 
         # Add mesh as new node to scene graph
         scene.meshes.append(mesh)
-        new_mesh_node = mglw.scene.Node(self.name, mesh=mesh, matrix=np.identity(4))
-        root = scene.root_nodes[0]
-        new_mesh_node.matrix_global = root.matrix_global
-        root.add_child(new_mesh_node)
-        window.scene.nodes.append(new_mesh_node)
+        new_mesh_node = mglw.scene.Node(f"{self.name}'s patch node", mesh=mesh, matrix=transform)
+        #root = scene.root_nodes[0]
+        #new_mesh_node.matrix_global = root.matrix_global # Fix? entity transform
+        #root.add_child(new_mesh_node) # do this in entity now
+        #window.scene.nodes.append(new_mesh_node)
         return new_mesh_node, num_instances
 
     # def on_new(self, message: dict):

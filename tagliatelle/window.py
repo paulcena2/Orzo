@@ -67,9 +67,9 @@ class Window(mglw.WindowConfig):
 
         # Create scene and set up basic nodes
         self.scene = mglw.scene.Scene("Noodles Scene")
-        root = mglw.scene.Node("Root")
-        root.matrix_global = np.identity(4, np.float32)
-        self.scene.root_nodes.append(root)
+        self.root = mglw.scene.Node("Root")
+        self.root.matrix_global = np.identity(4, np.float32)
+        self.scene.root_nodes.append(self.root)
         self.scene.cameras.append(self.camera)
 
         # Store shader settings
