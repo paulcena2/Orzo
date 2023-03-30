@@ -86,7 +86,7 @@ void main() {
         vec4 diffuseColor = material_color * color * tex_color;
 
         // Add contribution to final color
-        f_color += diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular;
+        f_color += (diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular) * intensity;
         i += 1;
     }
 }

@@ -64,6 +64,7 @@ class Window(mglw.WindowConfig):
 
         # Store Light Info
         self.lights = {}  # light_id: light_info
+        #self.default_lighting = False
 
         # Create scene and set up basic nodes
         self.scene = mglw.scene.Scene("Noodles Scene")

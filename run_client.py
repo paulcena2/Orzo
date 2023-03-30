@@ -21,7 +21,7 @@ del_hash = {
 }
 
 
-def start():
+def start(default_lighting=True):
 
     # Update forward refs where entity -> light -> client -> entity
     for delegate in del_hash.values():
@@ -30,6 +30,7 @@ def start():
     # Create Client and start rendering loop
     render_client = penne.create_client("ws://localhost:50000", del_hash)
     Window.client = render_client
+    Window.default_lighting = default_lighting
     Window.run()
 
     # Shutdown and wait for client thread to finish

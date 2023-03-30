@@ -85,6 +85,28 @@ class PhongProgram(MeshProgram):
         lights = list(self.window.lights.values())
         num_lights = len(lights)
 
+        # Default lighting
+        if self.window.default_lighting:
+            default_sun = {
+                "world_position": (0, 5, 0),
+                "color": (1, 1, 1, 1),
+                "ambient": (.3, .3, .3),
+                "type": 2,
+                "info": (.8, -1, 0, 0),
+                "direction": (0, 0, 0)
+            }
+            second = {
+                "world_position": (0, 0, 4),
+                "color": (1, 1, 1, 1),
+                "ambient": (.1, .1, .1),
+                "type": 0,
+                "info": (1, -1, 0, 0),
+                "direction": (0, 0, 0)
+            }
+            lights.append(default_sun)
+            lights.append(second)
+            num_lights += 2
+
         # Trim lights down if exceeding max amount for buffer in shader
         # - smarter way to get closer ones could be implemented
         if num_lights > 8:

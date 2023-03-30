@@ -531,10 +531,15 @@ class GeometryDelegate(Geometry):
         new_attributes = {attr.semantic: GeometryDelegate.reformat_attr(attr) for attr in noodle_attributes}
 
         # Get Index Bytes and Size to use later in vao
-        index = patch.indices
-        index_view = self.client.get_component(index.view)
-        index_bytes = index_view.buffer_delegate.bytes[index.offset:]
-        index_size = FORMAT_MAP[index.format].size
+        if patch.indices:
+            index = patch.indices
+            index_view = self.client.get_component(index.view)
+            index_bytes = index_view.buffer_delegate.bytes[index.offset:]
+            index_size = FORMAT_MAP[index.format].size
+        else:
+            # Non-indexed primitives just use range - 0, 1, 2, 3, etc...
+            index_bytes = np.arange(patch.vertex_count, dtype=np.single).tobytes()
+            index_size = 4  # four bytes / 32 bits for np.single
         vao.index_buffer(index_bytes, index_size)
 
         # Construct vertex array object from attribute buffers and buffer views
