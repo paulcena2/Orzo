@@ -1,3 +1,5 @@
+import logging
+
 import penne
 
 from tagliatelle.delegates import *
@@ -19,6 +21,11 @@ del_hash = {
     "bufferviews": BufferViewDelegate,
     "document": DocumentDelegate
 }
+
+logging.basicConfig(
+    format="%(message)s",
+    level=logging.DEBUG
+)
 
 
 def start(default_lighting=True):

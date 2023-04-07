@@ -24,7 +24,7 @@ void main() {
     
     mat3 normal_matrix = mat3(m_model);
     normal = normalize(normal_matrix * in_normal);
-    color = in_color;
+    color = in_color / 255;
     world_position = (m_model * local_position).xyz;
     view_vector = camera_position - world_position;
 

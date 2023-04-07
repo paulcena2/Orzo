@@ -41,6 +41,19 @@ FORMAT_MAP = {
     "VEC4": FormatInfo(4, 'f', 4)
 }
 
+NP_FORMAT_MAP = {
+    "U8": np.int8,
+    "U16": np.int16,
+    "U32": np.int32,
+    "U8VEC4": np.int8,
+    "U16VEC2": np.int16,
+    "VEC2": np.single,
+    "VEC3": np.single,
+    "VEC4": np.single,
+    "MAT3": np.single,
+    "MAT4": np.single
+}
+
 MODE_MAP = {
     "TRIANGLES": moderngl.TRIANGLES,
     "POINTS": moderngl.POINTS,
@@ -55,7 +68,7 @@ HINT_MAP = {
     "noo::any": (imgui.core.input_text, ("Any", 256), ""),
     "noo::text": (imgui.core.input_text, ("Text", 256), ""),
     "noo::integer": (imgui.core.input_int, "Int", ""),
-    "noo::real": (imgui.core.input_float, "Real", 1.0),
+    "noo::real": (imgui.core.input_float, ["Real"], 1.0),
     "noo::array": (imgui.core.input_text, ["[Array]", 256], ["[]"]),
     "noo::map": (imgui.core.input_text, ["{dict}", "{}", 256]),
     "noo::any_id": (imgui.core.input_int2, ["Id"], [0, 0]),
@@ -517,6 +530,32 @@ class GeometryDelegate(Geometry):
 
     def render_patch(self, patch, instances, window, transform=np.identity(4, np.float32)):
 
+        def get_attr_bytes(raw_bytes, offset, length, stride, format):
+            attr_bytes = b''
+            starts = range(offset, length, stride)
+            for start in starts:
+                attr_bytes += raw_bytes[start:start+(format.size * format.num_components)]
+            return attr_bytes
+
+        def reformat_color(raw_bytes, format):
+            # Reformat all colors to consistent u8vec4's
+
+            if format == "U8VEC4":
+                return raw_bytes
+
+            vals = np.frombuffer(raw_bytes, dtype=NP_FORMAT_MAP[format])
+            max_val = np.finfo(np.single).max
+            vals *= max_val  # not sure about this
+
+            if format == "VEC3":
+                # Pad to 4
+                grouped = vals.reshape((-1, 3))
+                col = np.array([1]*len(grouped))
+                vals = np.append(grouped, col, axis=1)
+
+            reformatted = vals.astype(np.int8).tobytes()
+            return reformatted
+
         scene = window.scene
 
         # Initialize VAO to store buffers and indices for this patch
@@ -542,29 +581,31 @@ class GeometryDelegate(Geometry):
             index_size = 4  # four bytes / 32 bits for np.single
         vao.index_buffer(index_bytes, index_size)
 
-        # Construct vertex array object from attribute buffers and buffer views
-        buffer_groups = {}
+        # Break buffer up into VAO by attribute for robustness
         for attribute in patch.attributes:
-            buffer_groups.setdefault(attribute.view, []).append(attribute)
+            view: BufferViewDelegate = self.client.get_component(attribute.view)
+            buffer_bytes = view.buffer_delegate.bytes
 
-        # Create a vertex array buffer for each group of attributes
-        for view_id, attributes in buffer_groups.items():
+            # Get format info
+            format_info = FORMAT_MAP[attribute.format]
+            buffer_format = f"{format_info.num_components}{format_info.format}"
 
-            # Get Bytes from the view
-            vertex_view = self.client.get_component(view_id)
-            buffer = vertex_view.buffer_delegate
-            vertex_bytes = buffer.bytes[:index.offset] if index_view == vertex_view else buffer.bytes
+            # Extract bytes and create buffer for attr
+            attr_bytes = get_attr_bytes(buffer_bytes, attribute.offset, view.length, attribute.stride, format_info)
+            if attribute.semantic == "COLOR":
+                attr_bytes = reformat_color(attr_bytes, attribute.format)
+                buffer_format = "4u1"
+            vao.buffer(attr_bytes, buffer_format, [new_attributes[attribute.semantic]["name"]])
 
-            # Format attributes for mglw, and add to vao
-            buffer_format, norm_factor = GeometryDelegate.construct_format_str(noodle_attributes)
-            attr_names = [new_attributes[attribute.semantic]["name"] for attribute in attributes]
-            vao.buffer(vertex_bytes, buffer_format, attr_names)
+            # Check if there is a texture attribute, and use format size to get normalization factor
+            if attribute.semantic == "TEXTURE":
+                norm_factor = (2 ** (format_info.size * 8)) - 1
 
         # Add default attributes for those that are missing
         if "COLOR" not in new_attributes:
             default_colors = [1.0, 1.0, 1.0, 1.0] * patch.vertex_count
-            buffer_data = np.array(default_colors, np.single)
-            vao.buffer(buffer_data, '4f', 'in_color')
+            buffer_data = np.array(default_colors, np.int8)
+            vao.buffer(buffer_data, '4u1', 'in_color')
 
         if "NORMAL" not in new_attributes:
             default_normal = [0.0, 0.0, 0.0] * patch.vertex_count
@@ -609,18 +650,8 @@ class GeometryDelegate(Geometry):
         # Add mesh as new node to scene graph
         scene.meshes.append(mesh)
         new_mesh_node = mglw.scene.Node(f"{self.name}'s patch node", mesh=mesh, matrix=transform)
-        #root = scene.root_nodes[0]
-        #new_mesh_node.matrix_global = root.matrix_global # Fix? entity transform
-        #root.add_child(new_mesh_node) # do this in entity now
-        #window.scene.nodes.append(new_mesh_node)
+
         return new_mesh_node, num_instances
-
-    # def on_new(self, message: dict):
-
-        # assuming all attrs use same view
-        # first_patch_attrs = self.patches[0].attributes
-        # view_id = first_patch_attrs[0].view
-        # self.buffer_view = self.client.get_component(view_id)
 
     def on_remove(self, message: dict):
         pass
@@ -773,14 +804,18 @@ class ImageDelegate(Image):
         # Get Bytes from either source present
         if self.buffer_source:
             buffer = self.client.get_component(self.buffer_source)
-            im = img.open(io.BytesIO(buffer.bytes))
-            im = im.transpose(img.FLIP_TOP_BOTTOM)
-            self.size = im.size
-            self.components = self.component_map[im.mode]
-            self.bytes = im.tobytes()
+            self.bytes = buffer.bytes
         else:
+            # beginning, end = self.uri_source.split("30043s")
+            # self.uri_source = beginning + "30043s.local" + end
             with urllib.request.urlopen(self.uri_source) as response:
                 self.bytes = response.read()
+
+        im = img.open(io.BytesIO(self.bytes))
+        im = im.transpose(img.FLIP_TOP_BOTTOM)
+        self.size = im.size
+        self.components = self.component_map[im.mode]
+        self.bytes = im.tobytes()
 
     def gui_rep(self):
         """Representation to be displayed in GUI"""
@@ -878,6 +913,8 @@ class BufferDelegate(Buffer):
         if self.inline_bytes:
             self.bytes = self.inline_bytes
         elif self.uri_bytes:
+            # beginning, end = self.uri_bytes.split("30043s")
+            # self.uri_bytes = beginning + "30043s.local" + end
             with urllib.request.urlopen(self.uri_bytes) as response:
                 self.bytes = response.read()
         else:
