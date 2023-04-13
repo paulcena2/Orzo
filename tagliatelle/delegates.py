@@ -269,7 +269,7 @@ class EntityDelegate(Entity):
         geometry = self.client.get_component(self.render_rep.mesh)
         self.geometry_delegate = geometry
         instances = self.render_rep.instances
-        self.patch_nodes, self.num_instances = geometry.render(instances, window, self.transform)
+        self.patch_nodes, self.num_instances = geometry.render(instances, window, np.array(self.transform, order='C'))
 
         # Add geometry patch nodes as children to main
         for node in self.patch_nodes:
@@ -321,9 +321,9 @@ class EntityDelegate(Entity):
     def get_world_transform(self):
         """Recursive function to get world transform for an entity"""
 
-        if self.transform:
+        if self.transform is not None:
             # Swap axis to go from col major -> row major order
-            local_transform = np.array(self.transform, np.float32).reshape(4, 4).swapaxes(0, 1)
+            local_transform = self.transform
         else:
             local_transform = np.identity(4, np.float32)
 
@@ -337,7 +337,7 @@ class EntityDelegate(Entity):
         """Recursive function to update nodes"""
 
         for child in node.children:
-            node.matrix_global = np.matmul(node.matrix_global, child.matrix)
+            child.matrix_global = np.matmul(node.matrix_global, child.matrix)
             self.update_node_transform(child)
 
     def remove_from_render(self, window):
@@ -366,8 +366,8 @@ class EntityDelegate(Entity):
         self.node.name = f"{self.id}'s Node"
 
         # Matrices
-        if self.transform:
-            self.node.matrix = np.array(self.transform, np.float32).reshape(4, 4).swapaxes(0, 1)
+        if self.transform is not None:
+            self.node.matrix = self.transform
         else:
             self.node.matrix = np.identity(4, np.float32)
         self.node.matrix_global = self.get_world_transform()
@@ -383,13 +383,22 @@ class EntityDelegate(Entity):
 
     def on_new(self, message: dict):
 
+        # Reformat transform
+        if self.transform:
+            self.transform = np.array(self.transform, np.float32).reshape(4, 4).swapaxes(0, 1)
+
+        # Set up MGLW node in scene
         self.client.callback_queue.put((self.set_up_node, []))
+
+        # Render mesh
         if self.render_rep:
             self.client.callback_queue.put((self.render_entity, []))
 
+        # Attach lights to scene
         if self.lights:
             self.client.callback_queue.put((self.attach_lights, []))
 
+        # Hooke up methods and signals
         self.method_delegates = [self.client.get_component(id) for id in self.methods_list]
         self.signal_delegates = [self.client.get_component(id) for id in self.signals_list]
 
@@ -414,6 +423,7 @@ class EntityDelegate(Entity):
         # Recursively update mesh transforms if changed
         if "transform" in message or "parent" in message:
 
+            self.transform = np.array(self.transform, np.float32).reshape(4, 4).swapaxes(0, 1)
             self.node.matrix = self.transform
             self.node.matrix_global = self.get_world_transform()
             self.update_node_transform(self.node)
@@ -647,7 +657,7 @@ class GeometryDelegate(Geometry):
             num_instances = 0
             mesh.mesh_program = programs.PhongProgram(window, num_instances=-1)
 
-        # Add mesh as new node to scene graph
+        # Add mesh as new node to scene graph, np.array(transform, order='C')
         scene.meshes.append(mesh)
         new_mesh_node = mglw.scene.Node(f"{self.name}'s patch node", mesh=mesh, matrix=transform)
 

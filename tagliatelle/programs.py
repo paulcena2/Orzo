@@ -53,6 +53,7 @@ class PhongProgram(MeshProgram):
         time=0,
     ):
 
+        model_matrix = model_matrix.astype(np.float32, order='C')
         self.program["m_proj"].write(projection_matrix)
         self.program["m_model"].write(model_matrix)
         self.program["m_cam"].write(camera_matrix)
