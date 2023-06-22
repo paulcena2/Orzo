@@ -2,8 +2,8 @@ import logging
 
 import penne
 
-from pappardelle.delegates import *
-from pappardelle.window import Window
+from orzo.delegates import *
+from orzo.window import Window
 
 del_hash = {
     "entities": EntityDelegate,

@@ -262,7 +262,7 @@ starting_components = [
 
 
 @pytest.fixture
-def rig_base_server():
+def base_server():
     with Server(50000, starting_components, server_delegates) as server:
         yield server
 

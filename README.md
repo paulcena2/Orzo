@@ -1,2 +1,3 @@
-# tagliatelle
-Noodles Rendering Client in Python
+# Orzo
+
+Rendering Client Application for NOODLES and Python

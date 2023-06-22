@@ -1,0 +1,6 @@
+penne >= 0.5.0
+numpy >= 1.18.1
+moderngl >= 5.5.4
+moderngl-window >= 2.3.0
+imgui >= 1.7.0
+Pillow >= 9.3

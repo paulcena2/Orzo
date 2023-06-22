@@ -4,7 +4,7 @@ build-backend = "flit_core.buildapi"
 
 
 [project]
-name = "pappardelle"
+name = "Orzo"
 authors = [
     {name = "Alex Racapé"},
 ]
@@ -39,5 +39,5 @@ testpaths = ["tests"]
 log_cli = true
 
 [project.urls]
-Source = "https://github.com/InsightCenterNoodles/Pappardelle"
-Documentation = "https://insightcenternoodles.github.io/Pappardelle/"
+Source = "https://github.com/InsightCenterNoodles/Orzo"
+Documentation = "https://insightcenternoodles.github.io/Orzo/"

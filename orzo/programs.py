@@ -2,7 +2,6 @@ import os
 
 import numpy as np
 import moderngl
-import moderngl_window as mglw
 
 from moderngl_window.scene import MeshProgram
 from PIL import Image
