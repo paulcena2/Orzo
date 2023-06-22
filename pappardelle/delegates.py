@@ -455,6 +455,9 @@ class EntityDelegate(Entity):
             for light in self.light_delegates:
                 light.gui_rep()
 
+        if self.transform is not None:
+            imgui.text(f"Transform: {self.transform}")
+
         imgui.text(f"Attached Methods: {self.methods_list}")
         if self.method_delegates:
             for method in self.method_delegates:

@@ -1,0 +1,43 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+
+[project]
+name = "pappardelle"
+authors = [
+    {name = "Alex Racapé"},
+]
+dynamic = ["version", "description"]
+readme = "README.md"
+requires-python = ">=3.8"
+keywords = ["noodles", "cbor", "Websockets", "client", "NOODLES"]
+license = {text = "MIT"}
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Visualization"
+]
+dependencies = [
+    "penne",
+    "numpy",
+    "moderngl",
+    "moderngl-window",
+    "imgui",
+    "Pillow",
+]
+
+[project.optional-dependencies]
+testing = [
+    "pytest",
+    "rigatoni[geometry]",
+    "pandas"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+log_cli = true
+
+[project.urls]
+Source = "https://github.com/InsightCenterNoodles/Pappardelle"
+Documentation = "https://insightcenternoodles.github.io/Pappardelle/"
