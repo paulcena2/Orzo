@@ -206,8 +206,8 @@ class TableDelegate(Table):
     signal_delegates = []
 
     def on_new(self, message: dict):
-        self.method_delegates = [self.client.get_component(id) for id in self.methods_list]
-        self.signal_delegates = [self.client.get_component(id) for id in self.signals_list]
+        self.method_delegates = [self.client.get_delegate(id) for id in self.methods_list]
+        self.signal_delegates = [self.client.get_delegate(id) for id in self.signals_list]
 
     def gui_rep(self):
         """Representation to be displayed in GUI"""
@@ -236,7 +236,7 @@ class DocumentDelegate(Document):
         imgui.text(f"{self.name}")
         imgui.text("Methods")
         for method in self.methods_list:
-            self.client.get_component(method).gui_rep()
+            self.client.get_delegate(method).gui_rep()
 
 
 class EntityDelegate(Entity):
@@ -266,14 +266,14 @@ class EntityDelegate(Entity):
         """
 
         # Prepare Mesh
-        geometry = self.client.get_component(self.render_rep.mesh)
+        geometry = self.client.get_delegate(self.render_rep.mesh)
         self.geometry_delegate = geometry
         instances = self.render_rep.instances
         self.patch_nodes, self.num_instances = geometry.render(instances, window, np.array(self.transform, order='C'))
 
         # Add geometry patch nodes as children to main
         for node in self.patch_nodes:
-            node.matrix = np.identity(4, np.float)
+            node.matrix = np.identity(4, np.float64)
             node.matrix_global = self.get_world_transform()
             self.node.add_child(node)
             window.scene.nodes.append(node)
@@ -285,7 +285,7 @@ class EntityDelegate(Entity):
         for light_id in self.lights:
 
             # Keep track of light delegates
-            light_delegate = self.client.get_component(light_id)
+            light_delegate = self.client.get_delegate(light_id)
             self.light_delegates.append(light_delegate)
 
             # Add positional and directional info to the light
@@ -328,7 +328,7 @@ class EntityDelegate(Entity):
             local_transform = np.identity(4, np.float32)
 
         if self.parent:
-            parent = self.client.get_component(self.parent)
+            parent = self.client.get_delegate(self.parent)
             return np.matmul(parent.get_world_transform(), local_transform)
         else:
             return local_transform
@@ -346,7 +346,7 @@ class EntityDelegate(Entity):
         # Need to test, enough to remove from render?
         scene = window.scene
         if self.parent:
-            parent = self.client.get_component(self.parent)
+            parent = self.client.get_delegate(self.parent)
             parent.node.children.remove(self.node)
         else:
             window.root.children.remove(self.node)
@@ -374,7 +374,7 @@ class EntityDelegate(Entity):
 
         # Update Scene / State
         if self.parent:
-            parent = self.client.get_component(self.parent)
+            parent = self.client.get_delegate(self.parent)
             parent.node.add_child(self.node)
         else:
             window.root.add_child(self.node)
@@ -399,8 +399,8 @@ class EntityDelegate(Entity):
             self.client.callback_queue.put((self.attach_lights, []))
 
         # Hooke up methods and signals
-        self.method_delegates = [self.client.get_component(id) for id in self.methods_list]
-        self.signal_delegates = [self.client.get_component(id) for id in self.signals_list]
+        self.method_delegates = [self.client.get_delegate(id) for id in self.methods_list]
+        self.signal_delegates = [self.client.get_delegate(id) for id in self.signals_list]
 
     def on_update(self, message: dict):
 
@@ -416,9 +416,9 @@ class EntityDelegate(Entity):
 
         # Update attached methods and signals from updated lists
         if "methods_list" in message:
-            self.method_delegates = [self.client.get_component(id) for id in self.methods_list]
+            self.method_delegates = [self.client.get_delegate(id) for id in self.methods_list]
         if "signals_list" in message:
-            self.signal_delegates = [self.client.get_component(id) for id in self.signals_list]
+            self.signal_delegates = [self.client.get_delegate(id) for id in self.signals_list]
 
         # Recursively update mesh transforms if changed
         if "transform" in message or "parent" in message:
@@ -447,7 +447,7 @@ class EntityDelegate(Entity):
         if self.geometry_delegate:
             self.geometry_delegate.gui_rep()
             if self.render_rep.instances:
-                self.client.get_component(self.render_rep.instances.view).gui_rep()
+                self.client.get_delegate(self.render_rep.instances.view).gui_rep()
             imgui.text(f"Num Instances: {self.num_instances}")
         if self.table_delegate:
             self.table_delegate.gui_rep()
@@ -476,8 +476,8 @@ class PlotDelegate(Plot):
     signal_delegates = []
 
     def on_new(self, message: dict):
-        self.method_delegates = [self.client.get_component(id) for id in self.methods_list]
-        self.signal_delegates = [self.client.get_component(id) for id in self.signals_list]
+        self.method_delegates = [self.client.get_delegate(id) for id in self.methods_list]
+        self.signal_delegates = [self.client.get_delegate(id) for id in self.signals_list]
 
     def gui_rep(self):
         """Representation to be displayed in GUI"""
@@ -575,7 +575,7 @@ class GeometryDelegate(Geometry):
         vao = mglw.opengl.vao.VAO(name=f"{self.name} Patch VAO", mode=MODE_MAP[patch.type])
 
         # Get Material - for now material delegate uses default texture
-        material = self.client.get_component(patch.material)
+        material = self.client.get_delegate(patch.material)
         scene.materials.append(material.mglw_material)
 
         # Reformat attributes
@@ -585,7 +585,7 @@ class GeometryDelegate(Geometry):
         # Get Index Bytes and Size to use later in vao
         if patch.indices:
             index = patch.indices
-            index_view = self.client.get_component(index.view)
+            index_view = self.client.get_delegate(index.view)
             index_bytes = index_view.buffer_delegate.bytes[index.offset:]
             index_size = FORMAT_MAP[index.format].size
         else:
@@ -596,7 +596,7 @@ class GeometryDelegate(Geometry):
 
         # Break buffer up into VAO by attribute for robustness
         for attribute in patch.attributes:
-            view: BufferViewDelegate = self.client.get_component(attribute.view)
+            view: BufferViewDelegate = self.client.get_delegate(attribute.view)
             buffer_bytes = view.buffer_delegate.bytes
 
             # Get format info
@@ -637,7 +637,7 @@ class GeometryDelegate(Geometry):
 
         # Add instances to vao if applicable, also add appropriate mesh program
         if instances:
-            instance_view = self.client.get_component(instances.view)
+            instance_view = self.client.get_delegate(instances.view)
             instance_buffer = instance_view.buffer_delegate
             instance_bytes = instance_buffer.bytes
             vao.buffer(instance_bytes, '16f/i', 'instance_matrix')
@@ -690,7 +690,7 @@ class GeometryDelegate(Geometry):
         imgui.separator()
         imgui.text("Index Info")
         index = patch.indices
-        index_view = self.client.get_component(index.view)
+        index_view = self.client.get_delegate(index.view)
         index_view.gui_rep()
         imgui.text(f"Count: {index.count}")
         imgui.text(f"Offset: {index.offset}")
@@ -699,7 +699,7 @@ class GeometryDelegate(Geometry):
         imgui.separator()
 
         if patch.material:
-            self.client.get_component(patch.material).gui_rep()
+            self.client.get_delegate(patch.material).gui_rep()
 
     def gui_rep(self):
         """Representation to be displayed in GUI"""
@@ -763,7 +763,7 @@ class MaterialDelegate(Material):
         """Set up texture for base color if applicable"""
 
         # Get texture
-        self.texture_delegate = self.client.get_component(self.pbr_info.base_color_texture.texture)
+        self.texture_delegate = self.client.get_delegate(self.pbr_info.base_color_texture.texture)
         mglw_texture = self.texture_delegate.mglw_texture
 
         # Hook texture up to sampler
@@ -816,7 +816,7 @@ class ImageDelegate(Image):
 
         # Get Bytes from either source present
         if self.buffer_source:
-            buffer = self.client.get_component(self.buffer_source)
+            buffer = self.client.get_delegate(self.buffer_source)
             self.bytes = buffer.bytes
         else:
             # beginning, end = self.uri_source.split("30043s")
@@ -849,7 +849,7 @@ class TextureDelegate(Texture):
     mglw_texture: moderngl.Texture = None
 
     def set_up_texture(self, window):
-        image = self.client.get_component(self.image)
+        image = self.client.get_delegate(self.image)
         self.image_delegate = image
         self.mglw_texture = window.ctx.texture(image.size, image.components, image.bytes)
         self.image_delegate.texture_id = self.mglw_texture.glo
@@ -859,7 +859,7 @@ class TextureDelegate(Texture):
         self.client.callback_queue.put((self.set_up_texture, []))
 
         if self.sampler:
-            self.sampler_delegate = self.client.get_component(self.sampler)
+            self.sampler_delegate = self.client.get_delegate(self.sampler)
 
     def gui_rep(self):
         """Representation to be displayed in GUI"""
@@ -949,7 +949,7 @@ class BufferViewDelegate(BufferView):
     buffer_delegate: BufferDelegate = None
 
     def on_new(self, message: dict):
-        self.buffer_delegate: BufferDelegate = self.client.get_component(self.source_buffer)
+        self.buffer_delegate: BufferDelegate = self.client.get_delegate(self.source_buffer)
 
     def gui_rep(self, description=""):
         """Representation to be displayed in GUI"""

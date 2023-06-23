@@ -6,20 +6,20 @@ from orzo.delegates import *
 from orzo.window import Window
 
 del_hash = {
-    "entities": EntityDelegate,
-    "tables": TableDelegate,
-    "plots": PlotDelegate,
-    "signals": SignalDelegate,
-    "methods": MethodDelegate,
-    "materials": MaterialDelegate,
-    "geometries": GeometryDelegate,
-    "lights": LightDelegate,
-    "images": ImageDelegate,
-    "textures": TextureDelegate,
-    "samplers": SamplerDelegate,
-    "buffers": BufferDelegate,
-    "bufferviews": BufferViewDelegate,
-    "document": DocumentDelegate
+    penne.Entity: EntityDelegate,
+    penne.Table: TableDelegate,
+    penne.Plot: PlotDelegate,
+    penne.Signal: SignalDelegate,
+    penne.Method: MethodDelegate,
+    penne.Material: MaterialDelegate,
+    penne.Geometry: GeometryDelegate,
+    penne.Light: LightDelegate,
+    penne.Image: ImageDelegate,
+    penne.Texture: TextureDelegate,
+    penne.Sampler: SamplerDelegate,
+    penne.Buffer: BufferDelegate,
+    penne.BufferView: BufferViewDelegate,
+    penne.Document: DocumentDelegate
 }
 
 logging.basicConfig(
@@ -40,7 +40,7 @@ def run(default_lighting=True):
         Window.default_lighting = default_lighting
         Window.run()  # Runs indefinitely until window is closed
 
-    logging.info(f"Finished Running Tagliatelle Client")
+    logging.info(f"Finished Running Orzo Client")
 
 
 if __name__ == "__main__":

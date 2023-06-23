@@ -40,7 +40,7 @@ class Window(mglw.WindowConfig):
     gl_version = (3, 3)
     aspect_ratio = 16 / 9
     resource_dir = Path(__file__).parent.resolve() / 'resources/'
-    title = "Tagliatelle Window"
+    title = "Orzo Window"
     resizable = True
     client = None
 
@@ -57,6 +57,7 @@ class Window(mglw.WindowConfig):
         self.camera.velocity = 1.0
         self.camera.zoom = 2.5
         self.camera_position = None
+        # self.key_repeat = True
 
         # Window Options
         self.wnd.mouse_exclusivity = True
@@ -64,7 +65,7 @@ class Window(mglw.WindowConfig):
 
         # Store Light Info
         self.lights = {}  # light_id: light_info
-        #self.default_lighting = False
+        # self.default_lighting = False
 
         # Create scene and set up basic nodes
         self.scene = mglw.scene.Scene("Noodles Scene")
@@ -88,7 +89,7 @@ class Window(mglw.WindowConfig):
         if self.camera_enabled:
             self.camera.key_input(key, action, modifiers)
 
-        if action == keys.ACTION_PRESS:
+        if action == keys.ACTION_PRESS:  # it looks like this is broken for later versions of pyglet
             if key == keys.C or key == keys.SPACE:
                 self.camera_enabled = not self.camera_enabled
                 self.wnd.mouse_exclusivity = self.camera_enabled

@@ -23,8 +23,7 @@ dependencies = [
     "numpy",
     "moderngl",
     "moderngl-window",
-    "imgui",
-    "Pillow",
+    "imgui[pyglet]",
 ]
 
 [project.optional-dependencies]
