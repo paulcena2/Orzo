@@ -37,6 +37,9 @@ testing = [
 testpaths = ["tests"]
 log_cli = true
 
+[tool.coverage.run]
+relative_files = true
+
 [project.urls]
 Source = "https://github.com/InsightCenterNoodles/Orzo"
 Documentation = "https://insightcenternoodles.github.io/Orzo/"
