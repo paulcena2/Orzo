@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 import io
 import urllib.request
 import json
+import logging
 
 from . import programs
 
@@ -159,7 +160,7 @@ class MethodDelegate(Method):
                     final_vals.append(clean_val)
 
                 context = get_context(on_delegate)
-                print(f"Invoking the method: {self.name} w/ args: {final_vals}")
+                logging.info(f"Invoking the method: {self.name} w/ args: {final_vals}")
                 self.client.invoke_method(self.name, final_vals, context=context)
             imgui.end_popup()
 
@@ -962,3 +963,21 @@ class BufferViewDelegate(BufferView):
             imgui.text(f"Offset: {self.offset}")
             imgui.text(f"Length: {self.length}")
         imgui.unindent()
+
+
+delegate_map = {
+    Entity: EntityDelegate,
+    Table: TableDelegate,
+    Plot: PlotDelegate,
+    Signal: SignalDelegate,
+    Method: MethodDelegate,
+    Material: MaterialDelegate,
+    Geometry: GeometryDelegate,
+    Light: LightDelegate,
+    Image: ImageDelegate,
+    Texture: TextureDelegate,
+    Sampler: SamplerDelegate,
+    Buffer: BufferDelegate,
+    BufferView: BufferViewDelegate,
+    Document: DocumentDelegate
+}

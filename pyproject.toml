@@ -4,13 +4,13 @@ build-backend = "flit_core.buildapi"
 
 
 [project]
-name = "Orzo"
+name = "orzo"
 authors = [
     {name = "Alex Racapé"},
 ]
 dynamic = ["version", "description"]
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 keywords = ["noodles", "cbor", "Websockets", "client", "NOODLES"]
 license = {text = "MIT"}
 classifiers = [
@@ -36,6 +36,9 @@ testing = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 log_cli = true
+
+[tool.coverage.run]
+relative_files = true
 
 [project.urls]
 Source = "https://github.com/InsightCenterNoodles/Orzo"
