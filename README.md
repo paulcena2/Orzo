@@ -8,7 +8,7 @@
 Rendering Client Application for NOODLES and Python
 
 ## Description
-Orzo is the first client application to build off of the NOODLES protocol to render 3d scenes in Python. NOODLES allows multiple client
+Orzo is the first client application to build on the NOODLES protocol to render 3d scenes in Python. NOODLES allows multiple client
 applications to interact collaboratively with data in real-time, and now these scenes can be easily displayed in Python.
 
 
