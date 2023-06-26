@@ -39,9 +39,11 @@ jobs:
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
-      run: |
-        echo -e "[run]\nrelative_files = True" > .coveragerc
-        pytest --cov orzo
+      uses: coactions/setup-xvfb@v1
+      with:
+        run: |
+          echo -e "[run]\nrelative_files = True" > .coveragerc
+          pytest --cov orzo
       env:
         COVERAGE_FILE: ".coverage.${{ matrix.python_version }}"
     - name: Verify Coverage File
