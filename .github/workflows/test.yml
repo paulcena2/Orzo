@@ -28,9 +28,9 @@ jobs:
         sudo apt-get install xvfb -y
         export DISPLAY=:99
 
-        - name: Start Xvfb
-          run: |
-            Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+    - name: Start Xvfb
+      run: |
+        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
 
     - name: Install dependencies
       run: |
