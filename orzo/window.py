@@ -1,9 +1,10 @@
+import queue
+import logging
+
 import moderngl_window as mglw
 import moderngl
 import numpy as np
 from pathlib import Path
-import queue
-
 import imgui
 from imgui.integrations.pyglet import create_renderer
 
@@ -129,7 +130,7 @@ class Window(mglw.WindowConfig):
         try:
             callback_info = Window.client.callback_queue.get(block=False)
             callback, args = callback_info
-            print(f"Callback in render: {callback} \n\tw/ args: {args}")
+            logging.info(f"Callback in render: {callback} \n\tw/ args: {args}")
             callback(self, *args)
 
         except queue.Empty:
