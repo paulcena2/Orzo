@@ -7,6 +7,7 @@ import numpy as np
 from pathlib import Path
 import imgui
 from imgui.integrations.pyglet import create_renderer
+import pyrr.matrix44 as m44
 
 import penne
 
@@ -30,6 +31,27 @@ SPECIFIER_MAP = {
     penne.BufferViewID: "Buffer Views",
     None: "Document"
 }
+
+
+def intersection(ray_direction, ray_origin, bbox_min, bbox_max):
+    """Ray-BoundingBox intersection test"""
+    t_near = float('-inf')
+    t_far = float('inf')
+
+    for i in range(3):
+        if ray_direction[i] == 0:
+            if ray_origin[i] < bbox_min[i] or ray_origin[i] > bbox_max[i]:
+                return False
+        else:
+            t1 = (bbox_min[i] - ray_origin[i]) / ray_direction[i]
+            t2 = (bbox_max[i] - ray_origin[i]) / ray_direction[i]
+            t_near = max(t_near, min(t1, t2))
+            t_far = min(t_far, max(t1, t2))
+
+    # if there is an intersection, return the distance
+    if t_near <= t_far:
+        return t_near
+    return False
 
 
 class Window(mglw.WindowConfig):
@@ -83,6 +105,76 @@ class Window(mglw.WindowConfig):
         imgui.create_context()
         self.impl = create_renderer(self.wnd._window)
         self.args = {}
+        self.selection = None  # Current entity that is selected
+        self.last_click = None  # (x, y) of last click
+
+        # Flag for rendering bounding boxes on mesh, can be toggled in GUI
+        self.draw_bboxes = False
+
+        # Set up skybox
+        # program = self.ctx.program(
+        #     vertex_shader='''
+        #         #version 330
+        #         uniform mat4 projection;
+        #         uniform mat4 view;
+        #         in vec3 in_vert;
+        #         out vec3 frag_coord;
+        #         void main() {
+        #             gl_Position = projection * view * vec4(in_vert, 1.0);
+        #             frag_coord = in_vert;
+        #         }
+        #     ''',
+        #     fragment_shader='''
+        #         #version 330
+        #         in vec3 frag_coord;
+        #         out vec4 fragColor;
+        #         uniform samplerCube skybox;
+        #         void main() {
+        #             fragColor = texture(skybox, normalize(frag_coord));
+        #         }
+        #     '''
+        # )
+        #
+        # # Create cube geometry
+        # vertices = np.array([
+        #     # Cube vertices
+        #     -1.0, -1.0, -1.0,
+        #     1.0, -1.0, -1.0,
+        #     -1.0, 1.0, -1.0,
+        #     1.0, 1.0, -1.0,
+        #     # ... (define the remaining vertices for the cube)
+        # ], dtype='f4')
+        #
+        # # Upload vertex data to GPU buffer
+        # vbo = self.ctx.buffer(vertices)
+        # vao = self.ctx.simple_vertex_array(program, vbo, 'in_vert')
+        #
+        # # Load and bind the skybox textures
+        # texture_filenames = [
+        #     'right.jpg',
+        #     'left.jpg',
+        #     'top.jpg',
+        #     'bottom.jpg',
+        #     'front.jpg',
+        #     'back.jpg'
+        # ]
+        # textures = []
+        # for filename in texture_filenames:
+        #     texture = self.ctx.texture((1024, 1024), 3)  # Replace with the appropriate texture size
+        #     texture.load(filename)  # Load the texture image
+        #     textures.append(texture)
+        #
+        # with textures[0], textures[1], textures[2], textures[3], textures[4], textures[5]:
+        #     texture_unit = 0
+        #     for texture in textures:
+        #         texture.use(texture_unit)
+        #         texture_unit += 1
+        #
+        # # Set shader uniforms (projection and view matrices)
+        #
+        # # Render the cube
+        # program['skybox'].value = 0  # Bind texture unit 0
+        # vao.render(moderngl.TRIANGLE_STRIP)
 
     def key_event(self, key, action, modifiers):
 
@@ -101,6 +193,82 @@ class Window(mglw.WindowConfig):
     def mouse_position_event(self, x: int, y: int, dx, dy):
         if self.camera_enabled:
             self.camera.rot_state(-dx, -dy)
+
+    def mouse_press_event(self, x: int, y: int, button: int):
+
+        # Convert to normalized device coordinates
+        x = (2.0 * x) / self.wnd.width - 1.0
+        y = 1.0 - (2.0 * y) / self.wnd.height
+        self.last_click = (x, y)
+        print(f"Mouse press: {x}, {y}")
+
+        # If the mouse is over a window, don't do anything
+        if imgui.is_window_hovered(imgui.HOVERED_ANY_WINDOW):
+            return
+
+        # Get matrices
+        projection = np.array(self.camera.projection.matrix)
+        view = np.array(self.camera.matrix)
+        inverse_projection = np.linalg.inv(projection)
+        inverse_view = np.linalg.inv(view)
+
+        # Device space -> clip space -> eye space -> world space
+        ray_clip = np.array([x, y, -1.0, 1.0], dtype=np.float32)
+        ray_eye = np.matmul(ray_clip, inverse_projection)  # Pre-multiplying col-major = post-multiplying row-major
+        ray_eye[2], ray_eye[3] = -1.0, 0.0
+        norm_factor = np.linalg.norm(ray_eye)
+        ray_eye = ray_eye / norm_factor if norm_factor != 0 else ray_eye
+        ray_world = np.matmul(ray_eye, inverse_view)
+
+        # Reformat final ray and normalize
+        ray = ray_world[:3]
+        norm_factor = np.linalg.norm(ray)
+        ray = ray / norm_factor if norm_factor != 0 else ray
+
+        # Check meshes for intersection with bounding box
+        closest = float('inf')
+        closest_mesh = None
+        for mesh in self.scene.meshes:
+            hit = intersection(ray, self.camera_position, mesh.bbox_min, mesh.bbox_max)
+            if hit and hit < closest:
+                closest = hit
+                closest_mesh = mesh
+
+        # Set selection in window state
+        if closest_mesh:
+            self.selection = self.client.get_delegate(closest_mesh.entity_id)
+            logging.info(f"Clicked Mesh: {closest_mesh} - {closest_mesh.entity_id}")
+        else:
+            self.selection = None
+
+    def mouse_drag_event(self, x: int, y: int, dx: int, dy: int):
+        """Change appearance by changing the mesh's transform"""
+        print(f"Dragging: {x}, {y}, {dx}, {dy}")
+        return
+
+        # if not self.selection:
+        #     return
+        #
+        # current_mat = self.selection.node.matrix
+        # translation_mat = np.array([[1, 0, 0, dx], [0, 1, 0, dy], [0, 0, 1, 0], [0, 0, 0, 1]])
+        # self.selection.node.matrix = np.matmul(current_mat, translation_mat)
+        #
+        # print(f"New Matrix: {self.selection.node.matrix}")
+        # print()
+
+    def mouse_release_event(self, x: int, y: int, button: int):
+        """On release, officially send request to move the object"""
+        # x = (2.0 * x) / self.wnd.width - 1.0
+        # y = 1.0 - (2.0 * y) / self.wnd.height
+        # x_last, y_last = self.last_click
+        # dx = x - x_last
+        # dy = y - y_last
+        # print(f"∆x: {dx}, ∆y: {dy}")
+        # if self.selection and self.last_click != (x, y):
+        #     try:
+        #         self.selection.request_move(dx, dy)
+        #     except AttributeError:
+        #         logging.warning(f"Dragging {self.selection} failed")
 
     def resize(self, width: int, height: int):
         self.camera.projection.update(aspect_ratio=self.wnd.aspect_ratio)
@@ -135,6 +303,25 @@ class Window(mglw.WindowConfig):
 
         except queue.Empty:
             pass
+
+    def render_document(self):
+        imgui.begin("Document")
+        document = self.client.state["document"]
+
+        # Methods
+        imgui.text(f"Methods")
+        imgui.separator()
+        for method_id in document.methods_list:
+            method = self.client.get_delegate(method_id)
+            method.invoke_rep()
+
+        # Signals
+        imgui.text(f"Signals")
+        imgui.separator()
+        for signal_id in document.signals_list:
+            signal = self.client.get_delegate(signal_id)
+            signal.gui_rep()
+        imgui.end()
 
     def update_gui(self):
 
@@ -182,20 +369,13 @@ class Window(mglw.WindowConfig):
         imgui.begin("Basic Info")
         imgui.text(f"Camera Position: {self.camera_position}")
         imgui.text(f"Press 'Space' to toggle camera/GUI")
+        _, self.draw_bboxes = imgui.checkbox("Show Bounding Boxes", self.draw_bboxes)
         imgui.end()
 
-        # Render Document Methods and Signals
-        imgui.begin("Document")
-        document = state["document"]
-        imgui.text(f"Methods")
-        imgui.separator()
-        for method_id in document.methods_list:
-            method = self.client.get_component(method_id)
-            method.invoke_rep()
-
-        imgui.text(f"Signals")
-        imgui.separator()
-        for signal_id in document.signals_list:
-            signal = self.client.get_component(signal_id)
-            signal.gui_rep()
-        imgui.end()
+        # Render Document Methods and Signals or selection
+        if self.selection is None:
+            self.render_document()
+        else:
+            imgui.begin("Selection")
+            self.selection.gui_rep()
+            imgui.end()

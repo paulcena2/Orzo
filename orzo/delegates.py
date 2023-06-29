@@ -111,7 +111,7 @@ class MethodDelegate(Method):
             if self.arg_doc:
                 imgui.open_popup(f"Invoke {self.name}")
             else:
-                self.client.invoke_method(self.name, [])
+                self.client.invoke_method(self.name, [], context=get_context(on_delegate))
 
         # Add more description to main window
         imgui.core.push_text_wrap_pos()
@@ -270,7 +270,10 @@ class EntityDelegate(Entity):
         geometry = self.client.get_delegate(self.render_rep.mesh)
         self.geometry_delegate = geometry
         instances = self.render_rep.instances
-        self.patch_nodes, self.num_instances = geometry.render(instances, window, np.array(self.transform, order='C'))
+        bounding_box = instances.bb if instances else None
+        bounding_box = (bounding_box.min, bounding_box.max) if bounding_box else (None, None)
+        self.patch_nodes, self.num_instances = geometry.render(instances, window, self.transform,
+                                                               bounding_box, self.id)
 
         # Add geometry patch nodes as children to main
         for node in self.patch_nodes:
@@ -292,8 +295,9 @@ class EntityDelegate(Entity):
             # Add positional and directional info to the light
             light_info = light_delegate.light_basics
             world_transform = self.get_world_transform()
-            pos = np.matmul(world_transform, np.array([0.0, 0.0, 0.0, 1.0]))
-            direction = np.matmul(world_transform, np.array([0.0, 0.0, -1.0, 1.0]))
+            wtt = world_transform.transpose()
+            pos = np.matmul(np.array([0.0, 0.0, 0.0, 1.0]), world_transform)
+            direction = np.matmul(np.array([0.0, 0.0, -1.0, 1.0]), world_transform)
             light_info["world_position"] = (pos[0] / pos[3], pos[1] / pos[3], pos[2] / pos[3])
             light_info["direction"] = (
                 direction[0] / direction[3], direction[1] / direction[3], direction[2] / direction[3]
@@ -323,14 +327,13 @@ class EntityDelegate(Entity):
         """Recursive function to get world transform for an entity"""
 
         if self.transform is not None:
-            # Swap axis to go from col major -> row major order
             local_transform = self.transform
         else:
             local_transform = np.identity(4, np.float32)
 
         if self.parent:
             parent = self.client.get_delegate(self.parent)
-            return np.matmul(parent.get_world_transform(), local_transform)
+            return np.matmul(local_transform, parent.get_world_transform())
         else:
             return local_transform
 
@@ -338,7 +341,7 @@ class EntityDelegate(Entity):
         """Recursive function to update nodes"""
 
         for child in node.children:
-            child.matrix_global = np.matmul(node.matrix_global, child.matrix)
+            child.matrix_global = np.matmul(child.matrix, node.matrix_global)
             self.update_node_transform(child)
 
     def remove_from_render(self, window):
@@ -357,10 +360,17 @@ class EntityDelegate(Entity):
         if self.node.mesh:
             scene.meshes.remove(self.node.mesh)
 
-        # for node in self.nodes:
-        #     scene.root_nodes[0].children.remove(node)
-        #     scene.nodes.remove(node)
-        #     scene.meshes.remove(node.mesh)
+    def request_move(self, dx, dy):
+        """Take 2d drag and get 3d coordinates to move entity"""
+
+        current_mat = self.transform if self.transform is not None else np.identity(4, np.float32)
+        translation_mat = np.array([[1, 0, 0, dx], [0, 1, 0, dy], [0, 0, 1, 0], [0, 0, 0, 1]])
+        self.transform = np.matmul(current_mat, translation_mat)
+        x, y, z = self.get_world_transform()[:3, 3]
+
+        # self.ent_move(x, y, z)  # Maybe something like this later for injected methods
+        method = self.client.get_delegate("move")
+        method.invoke(self, [x, y, z])
 
     def set_up_node(self, window):
 
@@ -386,7 +396,9 @@ class EntityDelegate(Entity):
 
         # Reformat transform
         if self.transform:
-            self.transform = np.array(self.transform, np.float32).reshape(4, 4).swapaxes(0, 1)
+            # Swap axis to go from col major -> row major order -- MGLW uses col major order bur numpy uses row major
+            # This keeps in col major order for MGLW
+            self.transform = np.array(self.transform, np.float32).reshape(4, 4)
 
         # Set up MGLW node in scene
         self.client.callback_queue.put((self.set_up_node, []))
@@ -424,7 +436,7 @@ class EntityDelegate(Entity):
         # Recursively update mesh transforms if changed
         if "transform" in message or "parent" in message:
 
-            self.transform = np.array(self.transform, np.float32).reshape(4, 4).swapaxes(0, 1)
+            self.transform = np.array(self.transform, np.float32).reshape(4, 4)
             self.node.matrix = self.transform
             self.node.matrix_global = self.get_world_transform()
             self.update_node_transform(self.node)
@@ -532,17 +544,45 @@ class GeometryDelegate(Geometry):
 
         return " ".join(formats), norm_factor
 
-    def render(self, instances, window, transform):
+    @staticmethod
+    def calculate_bounding_box(pos_bytes, translation, instance=False):
+        """Calculate bounding box from bytes
+
+        If we are dealing with instance rendering, assume instances are small and box them all in.
+        If dealing with vertices calculate it around the mesh
+        """
+
+        if instance:
+            instances = np.frombuffer(pos_bytes, np.float32)
+            instances = instances.reshape(-1, 16)
+            positions = instances[:, :3]
+            min_x, min_y, min_z = np.min(positions, axis=0)
+            max_x, max_y, max_z = np.max(positions, axis=0)
+        else:
+            vertices = np.frombuffer(pos_bytes, np.float32)
+            vertices = vertices.reshape(-1, 3)
+            min_x, min_y, min_z = np.min(vertices, axis=0)
+            max_x, max_y, max_z = np.max(vertices, axis=0)
+
+        bb_min = np.matmul(np.array([min_x, min_y, min_z, 1]), translation)  # Pre-multiply column major order
+        bb_max = np.matmul(np.array([max_x, max_y, max_z, 1]), translation)
+        return bb_min, bb_max
+
+    def render(self, instances, window, transform=None, bounding_box=(None, None), parent=None):
+
+        # Deal with default transform
+        if transform is None:
+            transform = np.eye(4)
 
         # Render each patch using the instances
         nodes = []
         num_instances = 0
         for patch in self.patches:
-            node, num_instances = self.render_patch(patch, instances, window, transform)
+            node, num_instances = self.render_patch(patch, instances, window, transform, bounding_box, parent)
             nodes.append(node)
         return nodes, num_instances
 
-    def render_patch(self, patch, instances, window, transform=np.identity(4, np.float32)):
+    def render_patch(self, patch, instances, window, transform, bounding_box=(None, None), parent_id=None):
 
         def get_attr_bytes(raw_bytes, offset, length, stride, format):
             attr_bytes = b''
@@ -606,9 +646,16 @@ class GeometryDelegate(Geometry):
 
             # Extract bytes and create buffer for attr
             attr_bytes = get_attr_bytes(buffer_bytes, attribute.offset, view.length, attribute.stride, format_info)
+
+            # Reformat colors to consistent u8vec4's
             if attribute.semantic == "COLOR":
                 attr_bytes = reformat_color(attr_bytes, attribute.format)
                 buffer_format = "4u1"
+
+            # Calculate bounding box if needed for entity without instances
+            if attribute.semantic == "POSITION" and bounding_box == (None, None) and not instances:
+                bounding_box = self.calculate_bounding_box(attr_bytes, transform)
+
             vao.buffer(attr_bytes, buffer_format, [new_attributes[attribute.semantic]["name"]])
 
             # Check if there is a texture attribute, and use format size to get normalization factor
@@ -635,6 +682,8 @@ class GeometryDelegate(Geometry):
         # Create Mesh
         mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material.mglw_material, attributes=new_attributes)
         mesh.norm_factor = norm_factor
+        mesh.geometry_id = self.id
+        mesh.entity_id = parent_id
 
         # Add instances to vao if applicable, also add appropriate mesh program
         if instances:
@@ -645,6 +694,10 @@ class GeometryDelegate(Geometry):
 
             num_instances = int(instance_buffer.size / 64)  # 16 4 byte floats per instance
             mesh.mesh_program = programs.PhongProgram(window, num_instances)
+
+            # Set up bounding box for instance rendering
+            if bounding_box == (None, None):
+                bounding_box = self.calculate_bounding_box(instance_bytes, transform, instance=True)
 
             # For debugging, instances...
             # instance_list = np.frombuffer(instance_bytes, np.single).tolist()
@@ -661,14 +714,14 @@ class GeometryDelegate(Geometry):
             num_instances = 0
             mesh.mesh_program = programs.PhongProgram(window, num_instances=-1)
 
+        # Set bounding box attributes
+        mesh.bbox_min, mesh.bbox_max = bounding_box
+
         # Add mesh as new node to scene graph, np.array(transform, order='C')
         scene.meshes.append(mesh)
         new_mesh_node = mglw.scene.Node(f"{self.name}'s patch node", mesh=mesh, matrix=transform)
 
         return new_mesh_node, num_instances
-
-    def on_remove(self, message: dict):
-        pass
 
     def patch_gui_rep(self, patch: GeometryPatch):
         """Rep for patches to be nested in GUI"""
