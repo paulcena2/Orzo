@@ -420,7 +420,7 @@ class EntityDelegate(Entity):
         # FIX RENDER REP IN ANY CHILD - figure out way to keep track of children and best way to recurse changes
         # What changes would get passed down? just transform?
         # probably need to pass that into the mesh in the node's transform
-        if "render_rep" in message:
+        if "render_rep" in message or "transform" in message or "parent" in message:
             self.client.callback_queue.put((self.remove_from_render, []))
             self.client.callback_queue.put((self.render_entity, []))
 
@@ -545,7 +545,7 @@ class GeometryDelegate(Geometry):
         return " ".join(formats), norm_factor
 
     @staticmethod
-    def calculate_bounding_box(pos_bytes, translation, instance=False):
+    def calculate_bounding_box(pos_bytes, instance=False):
         """Calculate bounding box from bytes
 
         If we are dealing with instance rendering, assume instances are small and box them all in.
@@ -564,9 +564,10 @@ class GeometryDelegate(Geometry):
             min_x, min_y, min_z = np.min(vertices, axis=0)
             max_x, max_y, max_z = np.max(vertices, axis=0)
 
-        bb_min = np.matmul(np.array([min_x, min_y, min_z, 1]), translation)  # Pre-multiply column major order
-        bb_max = np.matmul(np.array([max_x, max_y, max_z, 1]), translation)
-        return bb_min, bb_max
+        # bb_min = np.matmul(np.array([min_x, min_y, min_z, 1]), translation)  # Pre-multiply column major order
+        # bb_max = np.matmul(np.array([max_x, max_y, max_z, 1]), translation)
+        # return bb_min, bb_max
+        return np.array([min_x, min_y, min_z]), np.array([max_x, max_y, max_z])
 
     def render(self, instances, window, transform=None, bounding_box=(None, None), parent=None):
 
@@ -654,7 +655,7 @@ class GeometryDelegate(Geometry):
 
             # Calculate bounding box if needed for entity without instances
             if attribute.semantic == "POSITION" and bounding_box == (None, None) and not instances:
-                bounding_box = self.calculate_bounding_box(attr_bytes, transform)
+                bounding_box = self.calculate_bounding_box(attr_bytes)
 
             vao.buffer(attr_bytes, buffer_format, [new_attributes[attribute.semantic]["name"]])
 
@@ -681,9 +682,10 @@ class GeometryDelegate(Geometry):
 
         # Create Mesh
         mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material.mglw_material, attributes=new_attributes)
-        mesh.norm_factor = norm_factor
+        mesh.norm_factor = norm_factor  # For texture coords
         mesh.geometry_id = self.id
-        mesh.entity_id = parent_id
+        mesh.entity_id = parent_id  # Can get delegate from mesh in click detection
+        mesh.transform = transform  # Keep track of local transform, mostly for translating bbox in mesh.draw rn
 
         # Add instances to vao if applicable, also add appropriate mesh program
         if instances:
@@ -697,7 +699,7 @@ class GeometryDelegate(Geometry):
 
             # Set up bounding box for instance rendering
             if bounding_box == (None, None):
-                bounding_box = self.calculate_bounding_box(instance_bytes, transform, instance=True)
+                bounding_box = self.calculate_bounding_box(instance_bytes, instance=True)
 
             # For debugging, instances...
             # instance_list = np.frombuffer(instance_bytes, np.single).tolist()

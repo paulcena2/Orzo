@@ -2,6 +2,7 @@ import os
 
 import numpy as np
 import moderngl
+import pyrr.matrix44 as m44
 
 from moderngl_window.scene import MeshProgram
 from moderngl_window.geometry import bbox
@@ -66,7 +67,7 @@ class PhongProgram(MeshProgram):
 
         # Draw bounding box if enabled
         if self.window.draw_bboxes:
-            mesh.draw_bbox(projection_matrix, model_matrix, camera_matrix, self.bbox_program, bbox())
+            mesh.draw_bbox(projection_matrix, model_matrix, camera_matrix, self.bbox_program, bbox())  # Everything pushed to origin for x and y, something up with bbox()?
 
         # Only invert matrix / calculate camera position if camera is moved
         if list(camera_matrix) != PhongProgram.current_camera_matrix:

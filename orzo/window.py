@@ -7,7 +7,6 @@ import numpy as np
 from pathlib import Path
 import imgui
 from imgui.integrations.pyglet import create_renderer
-import pyrr.matrix44 as m44
 
 import penne
 
@@ -109,7 +108,7 @@ class Window(mglw.WindowConfig):
         self.last_click = None  # (x, y) of last click
 
         # Flag for rendering bounding boxes on mesh, can be toggled in GUI
-        self.draw_bboxes = False
+        self.draw_bboxes = True
 
         # Set up skybox
         # program = self.ctx.program(
@@ -229,7 +228,12 @@ class Window(mglw.WindowConfig):
         closest = float('inf')
         closest_mesh = None
         for mesh in self.scene.meshes:
-            hit = intersection(ray, self.camera_position, mesh.bbox_min, mesh.bbox_max)
+            # Convert bounding box to world space - Pad out to vec4, then transform by entity transform
+            bbox_min = np.array([*mesh.bbox_min, 1.0])
+            bbox_min = np.matmul(bbox_min, mesh.transform)
+            bbox_max = np.array([*mesh.bbox_max, 1.0])
+            bbox_max = np.matmul(bbox_max, mesh.transform)
+            hit = intersection(ray, self.camera_position, bbox_min, bbox_max)
             if hit and hit < closest:
                 closest = hit
                 closest_mesh = mesh
