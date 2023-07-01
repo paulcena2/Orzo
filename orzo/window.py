@@ -7,6 +7,7 @@ import numpy as np
 from pathlib import Path
 import imgui
 from imgui.integrations.pyglet import create_renderer
+from moderngl_window.integrations.imgui import ModernglWindowRenderer
 
 import penne
 
@@ -102,7 +103,8 @@ class Window(mglw.WindowConfig):
 
         # Set up GUI
         imgui.create_context()
-        self.impl = create_renderer(self.wnd._window)
+        # self.gui = create_renderer(self.wnd._window)
+        self.gui = ModernglWindowRenderer(self.wnd)
         self.args = {}
         self.selection = None  # Current entity that is selected
         self.last_click = None  # (x, y) of last click
@@ -177,10 +179,15 @@ class Window(mglw.WindowConfig):
 
     def key_event(self, key, action, modifiers):
 
+        # Pass event to gui
+        self.gui.key_event(key, action, modifiers)
+
+        # Move camera if enabled
         keys = self.wnd.keys
         if self.camera_enabled:
             self.camera.key_input(key, action, modifiers)
 
+        # Handle key presses like quit and toggle camera
         if action == keys.ACTION_PRESS:  # it looks like this is broken for later versions of pyglet
             if key == keys.C or key == keys.SPACE:
                 self.camera_enabled = not self.camera_enabled
@@ -190,10 +197,18 @@ class Window(mglw.WindowConfig):
                 self.timer.toggle_pause()
 
     def mouse_position_event(self, x: int, y: int, dx, dy):
+
+        # Pass event to gui
+        self.gui.mouse_position_event(x, y, dx, dy)
+
+        # Move camera if enabled
         if self.camera_enabled:
             self.camera.rot_state(-dx, -dy)
 
     def mouse_press_event(self, x: int, y: int, button: int):
+
+        # Pass event to gui
+        self.gui.mouse_press_event(x, y, button)
 
         # Convert to normalized device coordinates
         x = (2.0 * x) / self.wnd.width - 1.0
@@ -247,6 +262,10 @@ class Window(mglw.WindowConfig):
 
     def mouse_drag_event(self, x: int, y: int, dx: int, dy: int):
         """Change appearance by changing the mesh's transform"""
+
+        # Pass event to gui
+        self.gui.mouse_drag_event(x, y, dx, dy)
+
         print(f"Dragging: {x}, {y}, {dx}, {dy}")
         return
 
@@ -262,6 +281,10 @@ class Window(mglw.WindowConfig):
 
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
+
+        # Pass event to gui
+        self.gui.mouse_release_event(x, y, button)
+
         # x = (2.0 * x) / self.wnd.width - 1.0
         # y = 1.0 - (2.0 * y) / self.wnd.height
         # x_last, y_last = self.last_click
@@ -275,7 +298,12 @@ class Window(mglw.WindowConfig):
         #         logging.warning(f"Dragging {self.selection} failed")
 
     def resize(self, width: int, height: int):
+        self.gui.resize(width, height)
         self.camera.projection.update(aspect_ratio=self.wnd.aspect_ratio)
+
+    def unicode_char_entered(self, char):
+        print(f"Unicode char entered: {char}")
+        self.gui.unicode_char_entered(char)
 
     def render(self, time: float, frametime: float):
         """Renders a frame to on the window
@@ -297,7 +325,7 @@ class Window(mglw.WindowConfig):
         # Render GUI elements
         self.update_gui()
         imgui.render()
-        self.impl.render(imgui.get_draw_data())
+        self.gui.render(imgui.get_draw_data())
 
         try:
             callback_info = Window.client.callback_queue.get(block=False)

@@ -143,6 +143,9 @@ class MethodDelegate(Method):
                 else:
                     changed, values = component(f"{label} for {arg.name}", vals, *rest)
 
+                if changed:
+                    print(f"Changed {arg.name} to {values}")
+
                 self.current_args[arg.name] = (component, parameters, values)
                 imgui.text(arg.doc)
                 imgui.separator()
@@ -266,14 +269,13 @@ class EntityDelegate(Entity):
         Will be called as callback from window
         """
 
+        # Set up the node for the entity / mesh
+        self.set_up_node(window)
+
         # Prepare Mesh
         geometry = self.client.get_delegate(self.render_rep.mesh)
         self.geometry_delegate = geometry
-        instances = self.render_rep.instances
-        bounding_box = instances.bb if instances else None
-        bounding_box = (bounding_box.min, bounding_box.max) if bounding_box else (None, None)
-        self.patch_nodes, self.num_instances = geometry.render(instances, window, self.transform,
-                                                               bounding_box, self.id)
+        self.patch_nodes, self.num_instances = geometry.render(window, self)
 
         # Add geometry patch nodes as children to main
         for node in self.patch_nodes:
@@ -353,7 +355,7 @@ class EntityDelegate(Entity):
             parent = self.client.get_delegate(self.parent)
             parent.node.children.remove(self.node)
         else:
-            window.root.children.remove(self.node)
+            window.root.children.remove(self.node)  # Caused error! maybe node isn't set back up correctly on update
 
         # Update state in scene
         scene.nodes.remove(self.node)
@@ -396,12 +398,11 @@ class EntityDelegate(Entity):
 
         # Reformat transform
         if self.transform:
-            # Swap axis to go from col major -> row major order -- MGLW uses col major order bur numpy uses row major
             # This keeps in col major order for MGLW
             self.transform = np.array(self.transform, np.float32).reshape(4, 4)
 
-        # Set up MGLW node in scene
-        self.client.callback_queue.put((self.set_up_node, []))
+        # Set up MGLW node in scene - GONNA TRY MOVING INTO RENDER_ENTITY
+        # self.client.callback_queue.put((self.set_up_node, []))
 
         # Render mesh
         if self.render_rep:
@@ -564,26 +565,19 @@ class GeometryDelegate(Geometry):
             min_x, min_y, min_z = np.min(vertices, axis=0)
             max_x, max_y, max_z = np.max(vertices, axis=0)
 
-        # bb_min = np.matmul(np.array([min_x, min_y, min_z, 1]), translation)  # Pre-multiply column major order
-        # bb_max = np.matmul(np.array([max_x, max_y, max_z, 1]), translation)
-        # return bb_min, bb_max
-        return np.array([min_x, min_y, min_z]), np.array([max_x, max_y, max_z])
+        return BoundingBox(min=[min_x, min_y, min_z], max=[max_x, max_y, max_z])
 
-    def render(self, instances, window, transform=None, bounding_box=(None, None), parent=None):
-
-        # Deal with default transform
-        if transform is None:
-            transform = np.eye(4)
+    def render(self, window, entity):
 
         # Render each patch using the instances
         nodes = []
         num_instances = 0
         for patch in self.patches:
-            node, num_instances = self.render_patch(patch, instances, window, transform, bounding_box, parent)
+            node, num_instances = self.render_patch(patch, window, entity)
             nodes.append(node)
         return nodes, num_instances
 
-    def render_patch(self, patch, instances, window, transform, bounding_box=(None, None), parent_id=None):
+    def render_patch(self, patch, window, entity):
 
         def get_attr_bytes(raw_bytes, offset, length, stride, format):
             attr_bytes = b''
@@ -611,7 +605,17 @@ class GeometryDelegate(Geometry):
             reformatted = vals.astype(np.int8).tobytes()
             return reformatted
 
+        # Extract key attributes
         scene = window.scene
+        transform = entity.transform if entity.transform is not None else np.eye(4)
+        instances = entity.render_rep.instances
+        if entity.influence:
+            bounding_box = entity.influence
+        elif instances.bb:
+            bounding_box = instances.bb
+            entity.influence = bounding_box
+        else:
+            bounding_box = None
 
         # Initialize VAO to store buffers and indices for this patch
         vao = mglw.opengl.vao.VAO(name=f"{self.name} Patch VAO", mode=MODE_MAP[patch.type])
@@ -654,8 +658,9 @@ class GeometryDelegate(Geometry):
                 buffer_format = "4u1"
 
             # Calculate bounding box if needed for entity without instances
-            if attribute.semantic == "POSITION" and bounding_box == (None, None) and not instances:
+            if attribute.semantic == "POSITION" and not bounding_box and not instances:
                 bounding_box = self.calculate_bounding_box(attr_bytes)
+                entity.influence = bounding_box
 
             vao.buffer(attr_bytes, buffer_format, [new_attributes[attribute.semantic]["name"]])
 
@@ -684,8 +689,9 @@ class GeometryDelegate(Geometry):
         mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material.mglw_material, attributes=new_attributes)
         mesh.norm_factor = norm_factor  # For texture coords
         mesh.geometry_id = self.id
-        mesh.entity_id = parent_id  # Can get delegate from mesh in click detection
+        mesh.entity_id = entity.id  # Can get delegate from mesh in click detection
         mesh.transform = transform  # Keep track of local transform, mostly for translating bbox in mesh.draw rn
+        entity.node.mesh = mesh  # Add mesh to entity's node, used to delete from scene graph later
 
         # Add instances to vao if applicable, also add appropriate mesh program
         if instances:
@@ -698,8 +704,10 @@ class GeometryDelegate(Geometry):
             mesh.mesh_program = programs.PhongProgram(window, num_instances)
 
             # Set up bounding box for instance rendering
-            if bounding_box == (None, None):
+            if not bounding_box:
                 bounding_box = self.calculate_bounding_box(instance_bytes, instance=True)
+                instances.bb = bounding_box
+                entity.influence = bounding_box
 
             # For debugging, instances...
             # instance_list = np.frombuffer(instance_bytes, np.single).tolist()
@@ -717,7 +725,7 @@ class GeometryDelegate(Geometry):
             mesh.mesh_program = programs.PhongProgram(window, num_instances=-1)
 
         # Set bounding box attributes
-        mesh.bbox_min, mesh.bbox_max = bounding_box
+        mesh.bbox_min, mesh.bbox_max = np.array(bounding_box.min), np.array(bounding_box.max)
 
         # Add mesh as new node to scene graph, np.array(transform, order='C')
         scene.meshes.append(mesh)
