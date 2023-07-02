@@ -181,6 +181,7 @@ class Window(mglw.WindowConfig):
 
         # Pass event to gui
         self.gui.key_event(key, action, modifiers)
+        # action = "ACTION_PRESS"  # This function only registers key_releases rn
 
         # Move camera if enabled
         keys = self.wnd.keys
@@ -285,17 +286,17 @@ class Window(mglw.WindowConfig):
         # Pass event to gui
         self.gui.mouse_release_event(x, y, button)
 
-        # x = (2.0 * x) / self.wnd.width - 1.0
-        # y = 1.0 - (2.0 * y) / self.wnd.height
-        # x_last, y_last = self.last_click
-        # dx = x - x_last
-        # dy = y - y_last
-        # print(f"∆x: {dx}, ∆y: {dy}")
-        # if self.selection and self.last_click != (x, y):
-        #     try:
-        #         self.selection.request_move(dx, dy)
-        #     except AttributeError:
-        #         logging.warning(f"Dragging {self.selection} failed")
+        x = (2.0 * x) / self.wnd.width - 1.0
+        y = 1.0 - (2.0 * y) / self.wnd.height
+        x_last, y_last = self.last_click
+        dx = x - x_last
+        dy = y - y_last
+        print(f"∆x: {dx}, ∆y: {dy}")
+        if self.selection and self.last_click != (x, y):
+            try:
+                self.selection.request_move(dx, dy)
+            except AttributeError:
+                logging.warning(f"Dragging {self.selection} failed")
 
     def resize(self, width: int, height: int):
         self.gui.resize(width, height)
@@ -303,7 +304,17 @@ class Window(mglw.WindowConfig):
 
     def unicode_char_entered(self, char):
         print(f"Unicode char entered: {char}")
+
+        # Pass event to gui
         self.gui.unicode_char_entered(char)
+
+        # For current versions of dependencies, key presses are not being registered and handled
+        # As a workaround, we can send unicode_char_entered to the keypress event handler
+        # Having this problem with mglw==2.4.4, pyglet==2.0.8, imgui==2.0.0
+        # upper_char = char.upper()
+        # key_num = self.wnd.keys[upper_char]
+        # modifiers = mglw.context.base.keys.KeyModifiers()
+        # self.key_event(key_num, 'ACTION_PRESS', modifiers)
 
     def render(self, time: float, frametime: float):
         """Renders a frame to on the window

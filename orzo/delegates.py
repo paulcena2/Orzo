@@ -366,9 +366,10 @@ class EntityDelegate(Entity):
         """Take 2d drag and get 3d coordinates to move entity"""
 
         current_mat = self.transform if self.transform is not None else np.identity(4, np.float32)
-        translation_mat = np.array([[1, 0, 0, dx], [0, 1, 0, dy], [0, 0, 1, 0], [0, 0, 0, 1]])
+        translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, 0, 1]])
         self.transform = np.matmul(current_mat, translation_mat)
-        x, y, z = self.get_world_transform()[:3, 3]
+        world_transform = self.get_world_transform()
+        x, y, z = world_transform[3, :3]
 
         # self.ent_move(x, y, z)  # Maybe something like this later for injected methods
         method = self.client.get_delegate("move")
