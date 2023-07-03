@@ -362,11 +362,11 @@ class EntityDelegate(Entity):
         if self.node.mesh:
             scene.meshes.remove(self.node.mesh)
 
-    def request_move(self, dx, dy):
+    def request_move(self, dx, dy, dz):
         """Take 2d drag and get 3d coordinates to move entity"""
 
         current_mat = self.transform if self.transform is not None else np.identity(4, np.float32)
-        translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, 0, 1]])
+        translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
         self.transform = np.matmul(current_mat, translation_mat)
         world_transform = self.get_world_transform()
         x, y, z = world_transform[3, :3]
@@ -612,7 +612,7 @@ class GeometryDelegate(Geometry):
         instances = entity.render_rep.instances
         if entity.influence:
             bounding_box = entity.influence
-        elif instances.bb:
+        elif instances and instances.bb:
             bounding_box = instances.bb
             entity.influence = bounding_box
         else:

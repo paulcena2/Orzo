@@ -33,6 +33,19 @@ SPECIFIER_MAP = {
 }
 
 
+def get_char(cls, number):
+    for attr_name, attr_value in cls.__dict__.items():
+        if attr_value == number:
+            return attr_name[-1]
+    return None  # Return None if the number is not found in the mapping
+
+
+def get_distance_to_mesh(camera_pos, mesh):
+    """Get the distance from the camera to the mesh"""
+    mesh_position = mesh.node.matrix_global[3, :3]
+    return np.linalg.norm(camera_pos - mesh_position)
+
+
 def intersection(ray_direction, ray_origin, bbox_min, bbox_max):
     """Ray-BoundingBox intersection test"""
     t_near = float('-inf')
@@ -181,7 +194,7 @@ class Window(mglw.WindowConfig):
 
         # Pass event to gui
         self.gui.key_event(key, action, modifiers)
-        # action = "ACTION_PRESS"  # This function only registers key_releases rn
+        # action = "ACTION_PRESS"  # This function only registers key_releases for all_new
 
         # Move camera if enabled
         keys = self.wnd.keys
@@ -196,6 +209,10 @@ class Window(mglw.WindowConfig):
                 self.wnd.cursor = not self.camera_enabled
             if key == keys.P:
                 self.timer.toggle_pause()
+
+            # Workaround: try passing it to unicode char after for pyglet==2.0.7
+            uni_char = get_char(self.wnd.keys, key)
+            self.unicode_char_entered(uni_char.lower())
 
     def mouse_position_event(self, x: int, y: int, dx, dy):
 
@@ -286,15 +303,44 @@ class Window(mglw.WindowConfig):
         # Pass event to gui
         self.gui.mouse_release_event(x, y, button)
 
+        # Get matrices
+        projection = np.array(self.camera.projection.matrix)
+        view = np.array(self.camera.matrix)
+        inverse_projection = np.linalg.inv(projection)
+        inverse_view = np.linalg.inv(view)
+
+        # Normalized Device Coordinates
         x = (2.0 * x) / self.wnd.width - 1.0
         y = 1.0 - (2.0 * y) / self.wnd.height
         x_last, y_last = self.last_click
-        dx = x - x_last
-        dy = y - y_last
-        print(f"∆x: {dx}, ∆y: {dy}")
+
+        # Calculate vectors and move if applicable
         if self.selection and self.last_click != (x, y):
+
+            # Make vectors for click and release locations
+            distance = get_distance_to_mesh(self.camera_position, self.selection)
+            click_vec = np.array([x_last, y_last, -1.0, distance], dtype=np.float32)
+            release_vec = np.array([x, y, -1.0, distance], dtype=np.float32)
+
+            # To Eye-Space
+            click_vec = np.matmul(click_vec, inverse_projection)
+            release_vec = np.matmul(release_vec, inverse_projection)
+
+            # To World-Space
+            click_vec = np.matmul(click_vec, inverse_view)
+            release_vec = np.matmul(release_vec, inverse_view)
+
+            # Reformat final ray and normalize
+            click_vec = click_vec[:3]
+            release_vec = release_vec[:3]
+
+            # Get the difference between the two vectors
+            ray = release_vec - click_vec
+            dx, dy, dz = ray * distance  # Scale by distance to get actual movement, not sure if this is correct
+            print(f"∆x: {dx}, ∆y: {dy}, ∆z: {dz}")
+
             try:
-                self.selection.request_move(dx, dy)
+                self.selection.request_move(dx, dy, dz)
             except AttributeError:
                 logging.warning(f"Dragging {self.selection} failed")
 
