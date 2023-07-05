@@ -46,6 +46,13 @@ def get_distance_to_mesh(camera_pos, mesh):
     return np.linalg.norm(camera_pos - mesh_position)
 
 
+def normalize_device_coordinates(x, y, width, height):
+    """Normalize click coordinates to NDC"""
+    x = (2.0 * x) / width - 1.0
+    y = 1.0 - (2.0 * y) / height
+    return x, y
+
+
 def intersection(ray_direction, ray_origin, bbox_min, bbox_max):
     """Ray-BoundingBox intersection test"""
     t_near = float('-inf')
@@ -190,6 +197,43 @@ class Window(mglw.WindowConfig):
         # program['skybox'].value = 0  # Bind texture unit 0
         # vao.render(moderngl.TRIANGLE_STRIP)
 
+    def get_world_translations(self, x, y, x_last, y_last):
+        """Get world translation from 2d mouse input"""
+
+        # Normalized Device Coordinates
+        x, y = normalize_device_coordinates(x, y, self.wnd.width, self.wnd.height)
+        x_last, y_last = normalize_device_coordinates(x_last, y_last, self.wnd.width, self.wnd.height)
+
+        # Get matrices
+        projection = np.array(self.camera.projection.matrix)
+        view = np.array(self.camera.matrix)
+        inverse_projection = np.linalg.inv(projection)
+        inverse_view = np.linalg.inv(view)
+
+        # Make vectors for click and release locations
+        distance = get_distance_to_mesh(self.camera_position, self.selection)  # This is a rough estimate -> error down the road
+        click_vec = np.array([x_last, y_last, -1.0, distance], dtype=np.float32)
+        release_vec = np.array([x, y, -1.0, distance], dtype=np.float32)
+
+        # Reverse perspective division
+        click_vec[0:3] *= distance
+        release_vec[0:3] *= distance
+
+        # To Eye-Space
+        click_vec = np.matmul(click_vec, inverse_projection)
+        release_vec = np.matmul(release_vec, inverse_projection)
+
+        # To World-Space
+        click_vec = np.matmul(click_vec, inverse_view)
+        release_vec = np.matmul(release_vec, inverse_view)
+
+        # Reformat final ray and normalize
+        click_vec = click_vec[:3]
+        release_vec = release_vec[:3]
+
+        # Get the difference between the two vectors
+        return release_vec - click_vec
+
     def key_event(self, key, action, modifiers):
 
         # Pass event to gui
@@ -229,9 +273,8 @@ class Window(mglw.WindowConfig):
         self.gui.mouse_press_event(x, y, button)
 
         # Convert to normalized device coordinates
-        x = (2.0 * x) / self.wnd.width - 1.0
-        y = 1.0 - (2.0 * y) / self.wnd.height
         self.last_click = (x, y)
+        x, y = normalize_device_coordinates(x, y, self.wnd.width, self.wnd.height)
         print(f"Mouse press: {x}, {y}")
 
         # If the mouse is over a window, don't do anything
@@ -283,19 +326,20 @@ class Window(mglw.WindowConfig):
 
         # Pass event to gui
         self.gui.mouse_drag_event(x, y, dx, dy)
-
         print(f"Dragging: {x}, {y}, {dx}, {dy}")
-        return
 
-        # if not self.selection:
-        #     return
-        #
-        # current_mat = self.selection.node.matrix
-        # translation_mat = np.array([[1, 0, 0, dx], [0, 1, 0, dy], [0, 0, 1, 0], [0, 0, 0, 1]])
-        # self.selection.node.matrix = np.matmul(current_mat, translation_mat)
-        #
-        # print(f"New Matrix: {self.selection.node.matrix}")
-        # print()
+        if not self.selection:
+            return
+
+        x_last, y_last = x - dx, y - dy
+        dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
+        current_mat = self.selection.node.matrix
+        translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
+        self.selection.node.matrix = np.matmul(current_mat, translation_mat)
+        self.selection.node.matrix_global = self.selection.node.matrix
+
+        print(f"New Matrix: {self.selection.node.matrix}")
+        print()
 
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
@@ -303,40 +347,11 @@ class Window(mglw.WindowConfig):
         # Pass event to gui
         self.gui.mouse_release_event(x, y, button)
 
-        # Get matrices
-        projection = np.array(self.camera.projection.matrix)
-        view = np.array(self.camera.matrix)
-        inverse_projection = np.linalg.inv(projection)
-        inverse_view = np.linalg.inv(view)
-
-        # Normalized Device Coordinates
-        x = (2.0 * x) / self.wnd.width - 1.0
-        y = 1.0 - (2.0 * y) / self.wnd.height
-        x_last, y_last = self.last_click
-
         # Calculate vectors and move if applicable
         if self.selection and self.last_click != (x, y):
 
-            # Make vectors for click and release locations
-            distance = get_distance_to_mesh(self.camera_position, self.selection)
-            click_vec = np.array([x_last, y_last, -1.0, distance], dtype=np.float32)
-            release_vec = np.array([x, y, -1.0, distance], dtype=np.float32)
-
-            # To Eye-Space
-            click_vec = np.matmul(click_vec, inverse_projection)
-            release_vec = np.matmul(release_vec, inverse_projection)
-
-            # To World-Space
-            click_vec = np.matmul(click_vec, inverse_view)
-            release_vec = np.matmul(release_vec, inverse_view)
-
-            # Reformat final ray and normalize
-            click_vec = click_vec[:3]
-            release_vec = release_vec[:3]
-
-            # Get the difference between the two vectors
-            ray = release_vec - click_vec
-            dx, dy, dz = ray * distance  # Scale by distance to get actual movement, not sure if this is correct
+            x_last, y_last = self.last_click
+            dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
             print(f"∆x: {dx}, ∆y: {dy}, ∆z: {dz}")
 
             try:
