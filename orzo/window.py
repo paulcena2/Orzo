@@ -1,5 +1,6 @@
 import queue
 import logging
+import os
 
 import moderngl_window as mglw
 import moderngl
@@ -8,9 +9,12 @@ from pathlib import Path
 import imgui
 from imgui.integrations.pyglet import create_renderer
 from moderngl_window.integrations.imgui import ModernglWindowRenderer
-
 import penne
 
+from .programs import SkyboxProgram
+
+
+current_dir = os.path.dirname(__file__)
 
 DEFAULT_SHININESS = 10.0
 DEFAULT_SPEC_STRENGTH = 0.2
@@ -95,7 +99,7 @@ class Window(mglw.WindowConfig):
 
         # Set Up Camera
         self.camera = mglw.scene.camera.KeyboardCamera(self.wnd.keys, aspect_ratio=self.wnd.aspect_ratio)
-        self.camera.projection.update(near=0.1, far=100.0)
+        self.camera.projection.update(near=0.1, far=1000.0)  # Range where camera will cutoff
         self.camera.mouse_sensitivity = 0.1
         self.camera.velocity = 1.0
         self.camera.zoom = 2.5
@@ -133,69 +137,25 @@ class Window(mglw.WindowConfig):
         self.draw_bboxes = True
 
         # Set up skybox
-        # program = self.ctx.program(
-        #     vertex_shader='''
-        #         #version 330
-        #         uniform mat4 projection;
-        #         uniform mat4 view;
-        #         in vec3 in_vert;
-        #         out vec3 frag_coord;
-        #         void main() {
-        #             gl_Position = projection * view * vec4(in_vert, 1.0);
-        #             frag_coord = in_vert;
-        #         }
-        #     ''',
-        #     fragment_shader='''
-        #         #version 330
-        #         in vec3 frag_coord;
-        #         out vec4 fragColor;
-        #         uniform samplerCube skybox;
-        #         void main() {
-        #             fragColor = texture(skybox, normalize(frag_coord));
-        #         }
-        #     '''
-        # )
-        #
-        # # Create cube geometry
-        # vertices = np.array([
-        #     # Cube vertices
-        #     -1.0, -1.0, -1.0,
-        #     1.0, -1.0, -1.0,
-        #     -1.0, 1.0, -1.0,
-        #     1.0, 1.0, -1.0,
-        #     # ... (define the remaining vertices for the cube)
-        # ], dtype='f4')
-        #
-        # # Upload vertex data to GPU buffer
-        # vbo = self.ctx.buffer(vertices)
-        # vao = self.ctx.simple_vertex_array(program, vbo, 'in_vert')
-        #
-        # # Load and bind the skybox textures
-        # texture_filenames = [
-        #     'right.jpg',
-        #     'left.jpg',
-        #     'top.jpg',
-        #     'bottom.jpg',
-        #     'front.jpg',
-        #     'back.jpg'
-        # ]
-        # textures = []
-        # for filename in texture_filenames:
-        #     texture = self.ctx.texture((1024, 1024), 3)  # Replace with the appropriate texture size
-        #     texture.load(filename)  # Load the texture image
-        #     textures.append(texture)
-        #
-        # with textures[0], textures[1], textures[2], textures[3], textures[4], textures[5]:
-        #     texture_unit = 0
-        #     for texture in textures:
-        #         texture.use(texture_unit)
-        #         texture_unit += 1
-        #
-        # # Set shader uniforms (projection and view matrices)
-        #
-        # # Render the cube
-        # program['skybox'].value = 0  # Bind texture unit 0
-        # vao.render(moderngl.TRIANGLE_STRIP)
+        self.skybox = mglw.geometry.cube(size=(500, 500, 500))
+        self.skybox_program = self.load_program(os.path.join(current_dir, "shaders/cubemap.glsl"))
+        self.skybox_texture = self.load_texture_cube(
+            neg_x="skybox/right.png",
+            neg_y="skybox/bottom.png",
+            neg_z="skybox/back.png",
+            pos_x="skybox/left.png",
+            pos_y="skybox/top.png",
+            pos_z="skybox/front.png",
+            flip_x=True,
+        )
+
+        # Add skybox as node to scene
+        # self.skybox_texture.use(location=0)  # Not sure about location... need to check
+        # skybox_mesh = mglw.scene.Mesh("Skybox", vao=self.skybox)
+        # skybox_mesh.mesh_program = SkyboxProgram(self.skybox_program)
+        # node = mglw.scene.Node(f"Skybox Node", mesh=skybox_mesh)
+        # self.root.children.append(node)
+        # self.scene.meshes.append(skybox_mesh)
 
     def get_world_translations(self, x, y, x_last, y_last):
         """Get world translation from 2d mouse input"""
@@ -339,7 +299,6 @@ class Window(mglw.WindowConfig):
         self.selection.node.matrix_global = self.selection.node.matrix
 
         print(f"New Matrix: {self.selection.node.matrix}")
-        print()
 
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
@@ -386,7 +345,15 @@ class Window(mglw.WindowConfig):
         Note: each callback has the window as the first arg
         """
 
-        self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
+        self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE)  # was raising problem in IDE but seemed to work
+        # self.ctx.enable_only(moderngl.CULL_FACE)
+        self.ctx.front_face = 'cw'
+
+        # Render skybox
+        self.skybox_texture.use()  # Not sure about location... need to check
+        self.skybox_program['m_proj'].write(self.camera.projection.matrix)
+        self.skybox_program['m_cam'].write(self.camera.matrix)
+        self.skybox.render(self.skybox_program)
 
         self.scene.draw(
             projection_matrix=self.camera.projection.matrix,

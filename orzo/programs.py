@@ -139,3 +139,14 @@ class PhongProgram(MeshProgram):
     
     def apply(self, mesh):
         return self
+
+
+class SkyboxProgram(MeshProgram):
+
+    def draw(self, mesh, projection_matrix=None, model_matrix=None, camera_matrix=None, time=0):
+        self.program["m_proj"].write(projection_matrix)
+        self.program["m_cam"].write(camera_matrix)
+
+    def apply(self, mesh):
+        return self
+
