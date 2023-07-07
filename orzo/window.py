@@ -11,10 +11,10 @@ from imgui.integrations.pyglet import create_renderer
 from moderngl_window.integrations.imgui import ModernglWindowRenderer
 import penne
 
-from .programs import SkyboxProgram
-
 
 current_dir = os.path.dirname(__file__)
+
+SKYBOX_RADIUS = 1000.0
 
 DEFAULT_SHININESS = 10.0
 DEFAULT_SPEC_STRENGTH = 0.2
@@ -103,7 +103,7 @@ class Window(mglw.WindowConfig):
         self.camera.mouse_sensitivity = 0.1
         self.camera.velocity = 1.0
         self.camera.zoom = 2.5
-        self.camera_position = None
+        self.camera_position = [0.0, 0.0, 0.0]
         # self.key_repeat = True
 
         # Window Options
@@ -137,17 +137,9 @@ class Window(mglw.WindowConfig):
         self.draw_bboxes = True
 
         # Set up skybox
-        self.skybox = mglw.geometry.cube(size=(500, 500, 500))
-        self.skybox_program = self.load_program(os.path.join(current_dir, "shaders/cubemap.glsl"))
-        self.skybox_texture = self.load_texture_cube(
-            neg_x="skybox/right.png",
-            neg_y="skybox/bottom.png",
-            neg_z="skybox/back.png",
-            pos_x="skybox/left.png",
-            pos_y="skybox/top.png",
-            pos_z="skybox/front.png",
-            flip_x=True,
-        )
+        self.skybox = mglw.geometry.sphere(radius=SKYBOX_RADIUS)
+        self.skybox_program = self.load_program(os.path.join(current_dir, "shaders/sky.glsl"))
+        self.skybox_texture = self.load_texture_2d("skybox.png", flip_y=False)
 
     def get_world_translations(self, x, y, x_last, y_last):
         """Get world translation from 2d mouse input"""
