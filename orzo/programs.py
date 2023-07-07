@@ -97,11 +97,11 @@ class PhongProgram(MeshProgram):
         # Default lighting
         if self.window.default_lighting:
             default_sun = {
-                "world_position": (0, 5, 0),
+                "world_position": (0, 500, 1000),
                 "color": (1, 1, 1, 1),
-                "ambient": (.3, .3, .3),
+                "ambient": (.5, .5, .5),
                 "type": 2,
-                "info": (.8, -1, 0, 0),
+                "info": (.9, -1, 0, 0),
                 "direction": (0, 0, 0)
             }
             second = {

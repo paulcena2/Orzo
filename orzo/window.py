@@ -346,13 +346,14 @@ class Window(mglw.WindowConfig):
 
         self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE)  # was raising problem in IDE but seemed to work
         # self.ctx.enable_only(moderngl.CULL_FACE)
-        self.ctx.front_face = 'cw'
 
         # Render skybox
+        self.ctx.front_face = 'cw'
         self.skybox_texture.use()  # Not sure about location... need to check
         self.skybox_program['m_proj'].write(self.camera.projection.matrix)
         self.skybox_program['m_cam'].write(self.camera.matrix)
         self.skybox.render(self.skybox_program)
+        self.ctx.front_face = 'ccw'
 
         self.scene.draw(
             projection_matrix=self.camera.projection.matrix,
