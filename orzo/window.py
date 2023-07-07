@@ -149,14 +149,6 @@ class Window(mglw.WindowConfig):
             flip_x=True,
         )
 
-        # Add skybox as node to scene
-        # self.skybox_texture.use(location=0)  # Not sure about location... need to check
-        # skybox_mesh = mglw.scene.Mesh("Skybox", vao=self.skybox)
-        # skybox_mesh.mesh_program = SkyboxProgram(self.skybox_program)
-        # node = mglw.scene.Node(f"Skybox Node", mesh=skybox_mesh)
-        # self.root.children.append(node)
-        # self.scene.meshes.append(skybox_mesh)
-
     def get_world_translations(self, x, y, x_last, y_last):
         """Get world translation from 2d mouse input"""
 
@@ -196,6 +188,9 @@ class Window(mglw.WindowConfig):
 
     def key_event(self, key, action, modifiers):
 
+        # Log for debugging events
+        print(f"Key Entered: {key}, {action}, {modifiers}")
+
         # Pass event to gui
         self.gui.key_event(key, action, modifiers)
         # action = "ACTION_PRESS"  # This function only registers key_releases for all_new
@@ -220,6 +215,9 @@ class Window(mglw.WindowConfig):
 
     def mouse_position_event(self, x: int, y: int, dx, dy):
 
+        # Log for debugging events
+        # print(f"Mouse Position: {x}, {y}, {dx}, {dy}")
+
         # Pass event to gui
         self.gui.mouse_position_event(x, y, dx, dy)
 
@@ -228,6 +226,9 @@ class Window(mglw.WindowConfig):
             self.camera.rot_state(-dx, -dy)
 
     def mouse_press_event(self, x: int, y: int, button: int):
+
+        # Log for debugging events
+        print(f"Mouse Press: {x}, {y}, {button}")
 
         # Pass event to gui
         self.gui.mouse_press_event(x, y, button)
@@ -284,9 +285,11 @@ class Window(mglw.WindowConfig):
     def mouse_drag_event(self, x: int, y: int, dx: int, dy: int):
         """Change appearance by changing the mesh's transform"""
 
+        # Log for debugging events
+        print(f"Mouse Drag: {x}, {y}, {dx}, {dy}")
+
         # Pass event to gui
         self.gui.mouse_drag_event(x, y, dx, dy)
-        print(f"Dragging: {x}, {y}, {dx}, {dy}")
 
         if not self.selection:
             return
@@ -303,6 +306,9 @@ class Window(mglw.WindowConfig):
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
 
+        # Log for debugging events
+        print(f"Mouse Release: {x}, {y}, {button}")
+
         # Pass event to gui
         self.gui.mouse_release_event(x, y, button)
 
@@ -311,7 +317,6 @@ class Window(mglw.WindowConfig):
 
             x_last, y_last = self.last_click
             dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
-            print(f"∆x: {dx}, ∆y: {dy}, ∆z: {dz}")
 
             try:
                 self.selection.request_move(dx, dy, dz)
@@ -323,6 +328,8 @@ class Window(mglw.WindowConfig):
         self.camera.projection.update(aspect_ratio=self.wnd.aspect_ratio)
 
     def unicode_char_entered(self, char):
+
+        # Log for debugging events
         print(f"Unicode char entered: {char}")
 
         # Pass event to gui
