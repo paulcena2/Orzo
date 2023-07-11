@@ -434,19 +434,6 @@ class Window(mglw.WindowConfig):
         imgui.new_frame()
         state = self.client.state
 
-        # Shader Settings
-        shininess = self.shininess
-        spec = self.spec_strength
-        imgui.begin("Shader")
-        changed, shininess = imgui.slider_float("Shininess", shininess, 0.0, 100.0, format="%.0f", power=1.0)
-        if changed:
-            self.shininess = shininess
-
-        changed, spec = imgui.slider_float("Specular Strength", spec, 0.0, 1.0, power=1.0)
-        if changed:
-            self.spec_strength = spec
-        imgui.end()
-
         # Main Menu
         if imgui.begin_main_menu_bar():
             if imgui.begin_menu("File", True):
@@ -455,6 +442,35 @@ class Window(mglw.WindowConfig):
 
                 if clicked_quit:
                     exit(1)  # Need to hook this up to window
+                imgui.end_menu()
+            if imgui.begin_menu("Settings", True):
+
+                # Bboxes
+                clicked, self.draw_bboxes = imgui.checkbox("Show Bounding Boxes", self.draw_bboxes)
+
+                # Camera Settings
+                imgui.menu_item("Camera Settings", None, False, True)
+                changed, speed = imgui.slider_float("Speed", self.camera.velocity, 0.0, 10.0, format="%.0f")
+                if changed:
+                    self.camera.velocity = speed
+
+                changed, sensitivity = imgui.slider_float("Sensitivity", self.camera.mouse_sensitivity, 0.0, 1.0)
+                if changed:
+                    self.camera.mouse_sensitivity = sensitivity
+
+                # Shader Settings
+                imgui.menu_item("Shader Settings", None, False, True)
+                shininess = self.shininess
+                spec = self.spec_strength
+                changed, shininess = imgui.slider_float("Shininess", shininess, 0.0, 100.0, format="%.0f",
+                                                        power=1.0)
+                if changed:
+                    self.shininess = shininess
+
+                changed, spec = imgui.slider_float("Specular Strength", spec, 0.0, 1.0, power=1.0)
+                if changed:
+                    self.spec_strength = spec
+
                 imgui.end_menu()
             imgui.end_main_menu_bar()
 
