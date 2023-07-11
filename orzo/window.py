@@ -158,6 +158,7 @@ class Window(mglw.WindowConfig):
         self.draw_bboxes = True
 
         # Set up skybox
+        self.skybox_on = True
         self.skybox = mglw.geometry.sphere(radius=SKYBOX_RADIUS)
         self.skybox_program = self.load_program(os.path.join(current_dir, "shaders/sky.glsl"))
         self.skybox_texture = self.load_texture_2d("skybox.png", flip_y=False)
@@ -383,12 +384,13 @@ class Window(mglw.WindowConfig):
         # self.ctx.enable_only(moderngl.CULL_FACE)
 
         # Render skybox
-        self.ctx.front_face = 'cw'
-        self.skybox_texture.use()
-        self.skybox_program['m_proj'].write(self.camera.projection.matrix)
-        self.skybox_program['m_cam'].write(self.camera.matrix)
-        self.skybox.render(self.skybox_program)
-        self.ctx.front_face = 'ccw'
+        if self.skybox_on:
+            self.ctx.front_face = 'cw'
+            self.skybox_texture.use()
+            self.skybox_program['m_proj'].write(self.camera.projection.matrix)
+            self.skybox_program['m_cam'].write(self.camera.matrix)
+            self.skybox.render(self.skybox_program)
+            self.ctx.front_face = 'ccw'
 
         self.scene.draw(
             projection_matrix=self.camera.projection.matrix,
@@ -459,6 +461,9 @@ class Window(mglw.WindowConfig):
 
                 # Bboxes
                 clicked, self.draw_bboxes = imgui.checkbox("Show Bounding Boxes", self.draw_bboxes)
+
+                # Skybox
+                clicked, self.skybox_on = imgui.checkbox("Use Skybox", self.skybox_on)
 
                 # Camera Settings
                 imgui.menu_item("Camera Settings", None, False, True)
