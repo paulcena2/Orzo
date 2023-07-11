@@ -2,8 +2,10 @@ import os
 
 import numpy as np
 import moderngl
+import pyrr.matrix44 as m44
 
 from moderngl_window.scene import MeshProgram
+from moderngl_window.geometry import bbox
 from PIL import Image
 
 current_dir = os.path.dirname(__file__)
@@ -21,6 +23,9 @@ class PhongProgram(MeshProgram):
         self.window = wnd
         ctx = wnd.ctx
         self.num_instances = num_instances
+
+        # Bounding box shader if used
+        self.bbox_program = wnd.load_program(os.path.join(current_dir, "shaders/bbox.glsl"))
 
         # Vertex Shader
         if num_instances == -1:
@@ -58,7 +63,11 @@ class PhongProgram(MeshProgram):
         self.program["m_cam"].write(camera_matrix)
         self.program["normalization_factor"].value = mesh.norm_factor
         self.program["shininess"].value = self.window.shininess
-        self.program["spec_strength"].value =self.window.spec_strength
+        self.program["spec_strength"].value = self.window.spec_strength
+
+        # Draw bounding box if enabled
+        if self.window.draw_bboxes:
+            mesh.draw_bbox(projection_matrix, model_matrix, camera_matrix, self.bbox_program, bbox())  # Everything pushed to origin for x and y, something up with bbox()?
 
         # Only invert matrix / calculate camera position if camera is moved
         if list(camera_matrix) != PhongProgram.current_camera_matrix:
@@ -88,11 +97,11 @@ class PhongProgram(MeshProgram):
         # Default lighting
         if self.window.default_lighting:
             default_sun = {
-                "world_position": (0, 5, 0),
+                "world_position": (0, 500, 1000),
                 "color": (1, 1, 1, 1),
-                "ambient": (.3, .3, .3),
+                "ambient": (.5, .5, .5),
                 "type": 2,
-                "info": (.8, -1, 0, 0),
+                "info": (.9, -1, 0, 0),
                 "direction": (0, 0, 0)
             }
             second = {

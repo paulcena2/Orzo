@@ -1,5 +1,6 @@
 import queue
 import logging
+import os
 
 import moderngl_window as mglw
 import moderngl
@@ -7,9 +8,13 @@ import numpy as np
 from pathlib import Path
 import imgui
 from imgui.integrations.pyglet import create_renderer
-
+from moderngl_window.integrations.imgui import ModernglWindowRenderer
 import penne
 
+
+current_dir = os.path.dirname(__file__)
+
+SKYBOX_RADIUS = 1000.0
 
 DEFAULT_SHININESS = 10.0
 DEFAULT_SPEC_STRENGTH = 0.2
@@ -30,6 +35,65 @@ SPECIFIER_MAP = {
     penne.BufferViewID: "Buffer Views",
     None: "Document"
 }
+
+
+def get_char(cls, number):
+    for attr_name, attr_value in cls.__dict__.items():
+        if attr_value == number:
+            return attr_name[-1]
+    return None  # Return None if the number is not found in the mapping
+
+
+def get_distance_to_mesh(camera_pos, mesh):
+    """Get the distance from the camera to the mesh"""
+    mesh_position = mesh.node.matrix_global[3, :3]
+    return np.linalg.norm(camera_pos - mesh_position)
+
+
+def normalize_device_coordinates(x, y, width, height):
+    """Normalize click coordinates to NDC"""
+    x = (2.0 * x) / width - 1.0
+    y = 1.0 - (2.0 * y) / height
+    return x, y
+
+
+def intersection(ray_direction, ray_origin, bbox_min, bbox_max, entity=None):
+    """Ray-BoundingBox intersection test"""
+    t_near = float('-inf')
+    t_far = float('inf')
+
+    for i in range(3):
+        if ray_direction[i] == 0:
+            if ray_origin[i] < bbox_min[i] or ray_origin[i] > bbox_max[i]:
+                return False
+        else:
+            t1 = (bbox_min[i] - ray_origin[i]) / ray_direction[i]
+            t2 = (bbox_max[i] - ray_origin[i]) / ray_direction[i]
+            t_near = max(t_near, min(t1, t2))
+            t_far = min(t_far, max(t1, t2))
+
+    # if there is an intersection, return the distance
+    if t_near <= t_far:
+
+        return t_near
+
+        # if entity.num_instances == 0:
+        #     return t_near
+        # else:
+        #     # If there are instances, transform to world space and check distance to the closest one
+        #     # if entity.num_instances > 0:
+        #     #     instance_positions = entity.instance_positions
+        #     #     instance_positions = np.array([np.matmul(pos, mesh.transform) for pos in instance_positions])
+        #     #     instance_positions = instance_positions[:, :3]  # Remove homogeneous coordinate for dist calculation
+        #     #     dists = np.linalg.norm(instance_positions - self.camera_position, axis=1)
+        #     #     dist = np.min(dists)
+        #     # else:
+        #     #     dist = hit
+        #
+        #     # Work in progress...
+        #     return t_near
+
+    return False
 
 
 class Window(mglw.WindowConfig):
@@ -53,11 +117,11 @@ class Window(mglw.WindowConfig):
 
         # Set Up Camera
         self.camera = mglw.scene.camera.KeyboardCamera(self.wnd.keys, aspect_ratio=self.wnd.aspect_ratio)
-        self.camera.projection.update(near=0.1, far=100.0)
+        self.camera.projection.update(near=0.1, far=1000.0)  # Range where camera will cutoff
         self.camera.mouse_sensitivity = 0.1
         self.camera.velocity = 1.0
         self.camera.zoom = 2.5
-        self.camera_position = None
+        self.camera_position = [0.0, 0.0, 0.0]
         # self.key_repeat = True
 
         # Window Options
@@ -81,15 +145,72 @@ class Window(mglw.WindowConfig):
 
         # Set up GUI
         imgui.create_context()
-        self.impl = create_renderer(self.wnd._window)
+        # self.gui = create_renderer(self.wnd._window)
+        self.gui = ModernglWindowRenderer(self.wnd)
         self.args = {}
+        self.selection = None  # Current entity that is selected
+        self.last_click = None  # (x, y) of last click
+
+        # Flag for rendering bounding boxes on mesh, can be toggled in GUI
+        self.draw_bboxes = True
+
+        # Set up skybox
+        self.skybox = mglw.geometry.sphere(radius=SKYBOX_RADIUS)
+        self.skybox_program = self.load_program(os.path.join(current_dir, "shaders/sky.glsl"))
+        self.skybox_texture = self.load_texture_2d("skybox.png", flip_y=False)
+
+    def get_world_translations(self, x, y, x_last, y_last):
+        """Get world translation from 2d mouse input"""
+
+        # Normalized Device Coordinates
+        x, y = normalize_device_coordinates(x, y, self.wnd.width, self.wnd.height)
+        x_last, y_last = normalize_device_coordinates(x_last, y_last, self.wnd.width, self.wnd.height)
+
+        # Get matrices
+        projection = np.array(self.camera.projection.matrix)
+        view = np.array(self.camera.matrix)
+        inverse_projection = np.linalg.inv(projection)
+        inverse_view = np.linalg.inv(view)
+
+        # Make vectors for click and release locations
+        distance = get_distance_to_mesh(self.camera_position, self.selection)  # This is a rough estimate -> error down the road
+        click_vec = np.array([x_last, y_last, -1.0, distance], dtype=np.float32)
+        release_vec = np.array([x, y, -1.0, distance], dtype=np.float32)
+
+        # Reverse perspective division
+        click_vec[0:3] *= distance
+        release_vec[0:3] *= distance
+
+        # To Eye-Space
+        click_vec = np.matmul(click_vec, inverse_projection)
+        release_vec = np.matmul(release_vec, inverse_projection)
+
+        # To World-Space
+        click_vec = np.matmul(click_vec, inverse_view)
+        release_vec = np.matmul(release_vec, inverse_view)
+
+        # Reformat final ray and normalize
+        click_vec = click_vec[:3]
+        release_vec = release_vec[:3]
+
+        # Get the difference between the two vectors
+        return release_vec - click_vec
 
     def key_event(self, key, action, modifiers):
 
+        # Log for debugging events
+        print(f"Key Entered: {key}, {action}, {modifiers}")
+
+        # Pass event to gui
+        self.gui.key_event(key, action, modifiers)
+        # action = "ACTION_PRESS"  # This function only registers key_releases for all_new
+
+        # Move camera if enabled
         keys = self.wnd.keys
         if self.camera_enabled:
             self.camera.key_input(key, action, modifiers)
 
+        # Handle key presses like quit and toggle camera
         if action == keys.ACTION_PRESS:  # it looks like this is broken for later versions of pyglet
             if key == keys.C or key == keys.SPACE:
                 self.camera_enabled = not self.camera_enabled
@@ -98,12 +219,142 @@ class Window(mglw.WindowConfig):
             if key == keys.P:
                 self.timer.toggle_pause()
 
+            # Workaround: try passing it to unicode char after for pyglet==2.0.7
+            uni_char = get_char(self.wnd.keys, key)
+            self.unicode_char_entered(uni_char.lower())
+
     def mouse_position_event(self, x: int, y: int, dx, dy):
+
+        # Log for debugging events
+        # print(f"Mouse Position: {x}, {y}, {dx}, {dy}")
+
+        # Pass event to gui
+        self.gui.mouse_position_event(x, y, dx, dy)
+
+        # Move camera if enabled
         if self.camera_enabled:
             self.camera.rot_state(-dx, -dy)
 
+    def mouse_press_event(self, x: int, y: int, button: int):
+
+        # Log for debugging events
+        print(f"Mouse Press: {x}, {y}, {button}")
+
+        # Pass event to gui
+        self.gui.mouse_press_event(x, y, button)
+
+        # Convert to normalized device coordinates
+        self.last_click = (x, y)
+        x, y = normalize_device_coordinates(x, y, self.wnd.width, self.wnd.height)
+        print(f"Mouse press: {x}, {y}")
+
+        # If the mouse is over a window, don't do anything
+        if imgui.is_window_hovered(imgui.HOVERED_ANY_WINDOW):
+            return
+
+        # Get matrices
+        projection = np.array(self.camera.projection.matrix)
+        view = np.array(self.camera.matrix)
+        inverse_projection = np.linalg.inv(projection)
+        inverse_view = np.linalg.inv(view)
+
+        # Device space -> clip space -> eye space -> world space
+        ray_clip = np.array([x, y, -1.0, 1.0], dtype=np.float32)
+        ray_eye = np.matmul(ray_clip, inverse_projection)  # Pre-multiplying col-major = post-multiplying row-major
+        ray_eye[2], ray_eye[3] = -1.0, 0.0
+        norm_factor = np.linalg.norm(ray_eye)
+        ray_eye = ray_eye / norm_factor if norm_factor != 0 else ray_eye
+        ray_world = np.matmul(ray_eye, inverse_view)
+
+        # Reformat final ray and normalize
+        ray = ray_world[:3]
+        norm_factor = np.linalg.norm(ray)
+        ray = ray / norm_factor if norm_factor != 0 else ray
+
+        # Check meshes for intersection with bounding box
+        closest = float('inf')
+        closest_mesh = None
+        for mesh in self.scene.meshes:
+            # Convert bounding box to world space - Pad out to vec4, then transform by entity transform
+            entity = self.client.get_delegate(mesh.entity_id)
+            bbox_min = np.array([*mesh.bbox_min, 1.0])
+            bbox_min = np.matmul(bbox_min, mesh.transform)
+            bbox_max = np.array([*mesh.bbox_max, 1.0])
+            bbox_max = np.matmul(bbox_max, mesh.transform)
+            hit = intersection(ray, self.camera_position, bbox_min, bbox_max, entity)
+
+            # If intersection, get delegate and check if closest
+            if hit and hit < closest:
+                closest = hit
+                closest_mesh = entity
+
+        # Set selection in window state
+        if closest_mesh:
+            self.selection = closest_mesh
+            logging.info(f"Clicked Mesh: {closest_mesh}")
+        else:
+            self.selection = None
+
+    def mouse_drag_event(self, x: int, y: int, dx: int, dy: int):
+        """Change appearance by changing the mesh's transform"""
+
+        # Log for debugging events
+        print(f"Mouse Drag: {x}, {y}, {dx}, {dy}")
+
+        # Pass event to gui
+        self.gui.mouse_drag_event(x, y, dx, dy)
+
+        if not self.selection:
+            return
+
+        x_last, y_last = x - dx, y - dy
+        dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
+        current_mat = self.selection.node.matrix
+        translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
+        self.selection.node.matrix = np.matmul(current_mat, translation_mat)
+        self.selection.node.matrix_global = self.selection.node.matrix
+
+        print(f"New Matrix: {self.selection.node.matrix}")
+
+    def mouse_release_event(self, x: int, y: int, button: int):
+        """On release, officially send request to move the object"""
+
+        # Log for debugging events
+        print(f"Mouse Release: {x}, {y}, {button}")
+
+        # Pass event to gui
+        self.gui.mouse_release_event(x, y, button)
+
+        # Calculate vectors and move if applicable
+        if self.selection and self.last_click != (x, y):
+
+            x_last, y_last = self.last_click
+            dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
+
+            try:
+                self.selection.request_move(dx, dy, dz)
+            except AttributeError:
+                logging.warning(f"Dragging {self.selection} failed")
+
     def resize(self, width: int, height: int):
+        self.gui.resize(width, height)
         self.camera.projection.update(aspect_ratio=self.wnd.aspect_ratio)
+
+    def unicode_char_entered(self, char):
+
+        # Log for debugging events
+        print(f"Unicode char entered: {char}")
+
+        # Pass event to gui
+        self.gui.unicode_char_entered(char)
+
+        # For current versions of dependencies, key presses are not being registered and handled
+        # As a workaround, we can send unicode_char_entered to the keypress event handler
+        # Having this problem with mglw==2.4.4, pyglet==2.0.8, imgui==2.0.0
+        # upper_char = char.upper()
+        # key_num = self.wnd.keys[upper_char]
+        # modifiers = mglw.context.base.keys.KeyModifiers()
+        # self.key_event(key_num, 'ACTION_PRESS', modifiers)
 
     def render(self, time: float, frametime: float):
         """Renders a frame to on the window
@@ -114,7 +365,16 @@ class Window(mglw.WindowConfig):
         Note: each callback has the window as the first arg
         """
 
-        self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
+        self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE)  # was raising problem in IDE but seemed to work
+        # self.ctx.enable_only(moderngl.CULL_FACE)
+
+        # Render skybox
+        self.ctx.front_face = 'cw'
+        self.skybox_texture.use()
+        self.skybox_program['m_proj'].write(self.camera.projection.matrix)
+        self.skybox_program['m_cam'].write(self.camera.matrix)
+        self.skybox.render(self.skybox_program)
+        self.ctx.front_face = 'ccw'
 
         self.scene.draw(
             projection_matrix=self.camera.projection.matrix,
@@ -125,7 +385,7 @@ class Window(mglw.WindowConfig):
         # Render GUI elements
         self.update_gui()
         imgui.render()
-        self.impl.render(imgui.get_draw_data())
+        self.gui.render(imgui.get_draw_data())
 
         try:
             callback_info = Window.client.callback_queue.get(block=False)
@@ -135,6 +395,25 @@ class Window(mglw.WindowConfig):
 
         except queue.Empty:
             pass
+
+    def render_document(self):
+        imgui.begin("Document")
+        document = self.client.state["document"]
+
+        # Methods
+        imgui.text(f"Methods")
+        imgui.separator()
+        for method_id in document.methods_list:
+            method = self.client.get_delegate(method_id)
+            method.invoke_rep()
+
+        # Signals
+        imgui.text(f"Signals")
+        imgui.separator()
+        for signal_id in document.signals_list:
+            signal = self.client.get_delegate(signal_id)
+            signal.gui_rep()
+        imgui.end()
 
     def update_gui(self):
 
@@ -182,20 +461,13 @@ class Window(mglw.WindowConfig):
         imgui.begin("Basic Info")
         imgui.text(f"Camera Position: {self.camera_position}")
         imgui.text(f"Press 'Space' to toggle camera/GUI")
+        _, self.draw_bboxes = imgui.checkbox("Show Bounding Boxes", self.draw_bboxes)
         imgui.end()
 
-        # Render Document Methods and Signals
-        imgui.begin("Document")
-        document = state["document"]
-        imgui.text(f"Methods")
-        imgui.separator()
-        for method_id in document.methods_list:
-            method = self.client.get_component(method_id)
-            method.invoke_rep()
-
-        imgui.text(f"Signals")
-        imgui.separator()
-        for signal_id in document.signals_list:
-            signal = self.client.get_component(signal_id)
-            signal.gui_rep()
-        imgui.end()
+        # Render Document Methods and Signals or selection
+        if self.selection is None:
+            self.render_document()
+        else:
+            imgui.begin("Selection")
+            self.selection.gui_rep()
+            imgui.end()

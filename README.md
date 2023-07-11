@@ -2,7 +2,7 @@
 
 ![Build Status](https://github.com/InsightCenterNoodles/Orzo/workflows/CI/badge.svg)
 ![PyPI](https://img.shields.io/pypi/v/Orzo)
-[![Coverage badge](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/InsightCenterNoodles/Orzo/python-coverage-comment-action-data/endpoint.json&color=red)](https://htmlpreview.github.io/?https://github.com/InsightCenterNoodles/Penne/blob/python-coverage-comment-action-data/htmlcov/index.html)
+[![Coverage badge](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/InsightCenterNoodles/Orzo/python-coverage-comment-action-data/endpoint.json&color=red)](https://htmlpreview.github.io/?https://github.com/InsightCenterNoodles/Orzo/blob/python-coverage-comment-action-data/htmlcov/index.html)
 
 
 Rendering Client Application for NOODLES and Python

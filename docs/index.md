@@ -2,7 +2,7 @@
 
 ![Build Status](https://github.com/InsightCenterNoodles/Orzo/workflows/CI/badge.svg)
 ![PyPI](https://img.shields.io/pypi/v/Orzo)
-[![Coverage badge](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/InsightCenterNoodles/Orzo/python-coverage-comment-action-data/endpoint.json&color=red)](https://htmlpreview.github.io/?https://github.com/InsightCenterNoodles/Penne/blob/python-coverage-comment-action-data/htmlcov/index.html)
+[![Coverage badge](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/InsightCenterNoodles/Orzo/python-coverage-comment-action-data/endpoint.json&color=red)](https://htmlpreview.github.io/?https://github.com/InsightCenterNoodles/Orzo/blob/python-coverage-comment-action-data/htmlcov/index.html)
 
 Orzo is the first client application to build off of the NOODLES protocol to render 3d scenes in Python. NOODLES allows multiple client
 applications to interact collaboratively with data in real-time, and now these scenes can be easily displayed in Python.

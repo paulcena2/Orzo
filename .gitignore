@@ -1,6 +1,7 @@
 # Added 
 render_venv/
 test_venv/
+all_new_venv/
 .idea
 
 # Standard from Github
