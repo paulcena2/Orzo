@@ -22,6 +22,7 @@ uniform sampler2D base_texture;
 uniform bool double_sided;
 uniform float shininess;
 uniform float spec_strength;
+uniform float attention;
 
 out vec4 f_color;
 
@@ -89,7 +90,7 @@ void main() {
         //diffuseColor = material_color * tex_color;
         //f_color += diffuseColor;
         //f_color += ((diffuse + vec4(ambient, 1.0)) + specular) * intensity;
-        f_color += (diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular) * intensity;
+        f_color += (diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular) * intensity * attention;
         i += 1;
     }
 }
