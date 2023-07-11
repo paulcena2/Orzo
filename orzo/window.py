@@ -57,7 +57,22 @@ def normalize_device_coordinates(x, y, width, height):
     return x, y
 
 
-def intersection(ray_direction, ray_origin, bbox_min, bbox_max, entity=None):
+def distances_point_to_ray(points, ray_origin, ray_direction):
+    """Compute distance from point to a ray in 3d space
+
+    Useful for checking distance from instance to ray when clicking
+    """
+
+    distances = []
+    for point in points:
+        vec_to_point = point[:3] - ray_origin
+        parallel_component = np.dot(vec_to_point, ray_direction)
+        closest_point = ray_origin + parallel_component * ray_direction
+        distances.append(np.linalg.norm(closest_point - point[:3]))
+    return distances
+
+
+def intersection(ray_direction, ray_origin, bbox_min, bbox_max, instance_positions=None):
     """Ray-BoundingBox intersection test"""
     t_near = float('-inf')
     t_far = float('inf')
@@ -75,23 +90,11 @@ def intersection(ray_direction, ray_origin, bbox_min, bbox_max, entity=None):
     # if there is an intersection, return the distance
     if t_near <= t_far:
 
-        return t_near
-
-        # if entity.num_instances == 0:
-        #     return t_near
-        # else:
-        #     # If there are instances, transform to world space and check distance to the closest one
-        #     # if entity.num_instances > 0:
-        #     #     instance_positions = entity.instance_positions
-        #     #     instance_positions = np.array([np.matmul(pos, mesh.transform) for pos in instance_positions])
-        #     #     instance_positions = instance_positions[:, :3]  # Remove homogeneous coordinate for dist calculation
-        #     #     dists = np.linalg.norm(instance_positions - self.camera_position, axis=1)
-        #     #     dist = np.min(dists)
-        #     # else:
-        #     #     dist = hit
-        #
-        #     # Work in progress...
-        #     return t_near
+        if instance_positions is not None:
+            dists = distances_point_to_ray(instance_positions, ray_origin, ray_direction)
+            return np.min(dists), t_near
+        else:
+            return 0, t_near
 
     return False
 
@@ -272,7 +275,8 @@ class Window(mglw.WindowConfig):
         ray = ray / norm_factor if norm_factor != 0 else ray
 
         # Check meshes for intersection with bounding box
-        closest = float('inf')
+        closest_dtc = float('inf')
+        closest_dtr = float('inf')
         closest_mesh = None
         for mesh in self.scene.meshes:
             # Convert bounding box to world space - Pad out to vec4, then transform by entity transform
@@ -281,11 +285,21 @@ class Window(mglw.WindowConfig):
             bbox_min = np.matmul(bbox_min, mesh.transform)
             bbox_max = np.array([*mesh.bbox_max, 1.0])
             bbox_max = np.matmul(bbox_max, mesh.transform)
-            hit = intersection(ray, self.camera_position, bbox_min, bbox_max, entity)
+            if entity.instance_positions is not None:
+                instance_positions = np.array([np.matmul(pos, mesh.transform) for pos in entity.instance_positions])
+                hit = intersection(ray, self.camera_position, bbox_min, bbox_max, instance_positions)
+            else:
+                hit = intersection(ray, self.camera_position, bbox_min, bbox_max)
 
-            # If intersection, get delegate and check if closest
-            if hit and hit < closest:
-                closest = hit
+            if not hit:  # No intersection with bounding box at all
+                continue
+
+            dist_to_ray, dist_to_camera = hit
+
+            # Closest if ray is closer than previous closest, or if ray is same distance but closer to camera
+            if dist_to_ray < closest_dtr or (dist_to_ray == closest_dtr and dist_to_camera < closest_dtc):
+                closest_dtr = dist_to_ray
+                closest_dtc = dist_to_camera
                 closest_mesh = entity
 
         # Set selection in window state
@@ -420,21 +434,20 @@ class Window(mglw.WindowConfig):
         imgui.new_frame()
         state = self.client.state
 
-        # Shader Settings
-        shininess = self.shininess
-        spec = self.spec_strength
-        imgui.begin("Shader")
-        changed, shininess = imgui.slider_float("Shininess", shininess, 0.0, 100.0, format="%.0f", power=1.0)
-        if changed:
-            self.shininess = shininess
-
-        changed, spec = imgui.slider_float("Specular Strength", spec, 0.0, 1.0, power=1.0)
-        if changed:
-            self.spec_strength = spec
-        imgui.end()
-
         # Main Menu
         if imgui.begin_main_menu_bar():
+
+            if imgui.begin_menu("State", True):
+                for id_type in penne.id_map.values():
+
+                    expanded, visible = imgui.collapsing_header(f"{SPECIFIER_MAP[id_type]}", visible=True)
+                    if not expanded:
+                        continue
+
+                    select_components = [component for id, component in state.items() if type(id) is id_type]
+                    for delegate in select_components:
+                        delegate.gui_rep()
+                imgui.end_menu()
             if imgui.begin_menu("File", True):
 
                 clicked_quit, selected_quit = imgui.menu_item("Quit", 'Cmd+Q', False, True)
@@ -442,20 +455,36 @@ class Window(mglw.WindowConfig):
                 if clicked_quit:
                     exit(1)  # Need to hook this up to window
                 imgui.end_menu()
+            if imgui.begin_menu("Settings", True):
+
+                # Bboxes
+                clicked, self.draw_bboxes = imgui.checkbox("Show Bounding Boxes", self.draw_bboxes)
+
+                # Camera Settings
+                imgui.menu_item("Camera Settings", None, False, True)
+                changed, speed = imgui.slider_float("Speed", self.camera.velocity, 0.0, 10.0, format="%.0f")
+                if changed:
+                    self.camera.velocity = speed
+
+                changed, sensitivity = imgui.slider_float("Sensitivity", self.camera.mouse_sensitivity, 0.0, 1.0)
+                if changed:
+                    self.camera.mouse_sensitivity = sensitivity
+
+                # Shader Settings
+                imgui.menu_item("Shader Settings", None, False, True)
+                shininess = self.shininess
+                spec = self.spec_strength
+                changed, shininess = imgui.slider_float("Shininess", shininess, 0.0, 100.0, format="%.0f",
+                                                        power=1.0)
+                if changed:
+                    self.shininess = shininess
+
+                changed, spec = imgui.slider_float("Specular Strength", spec, 0.0, 1.0, power=1.0)
+                if changed:
+                    self.spec_strength = spec
+
+                imgui.end_menu()
             imgui.end_main_menu_bar()
-
-        # State Inspector
-        imgui.begin("State")
-        for id_type in penne.id_map.values():
-
-            expanded, visible = imgui.collapsing_header(f"{SPECIFIER_MAP[id_type]}", visible=True)
-            if not expanded:
-                continue
-
-            select_components = [component for id, component in state.items() if type(id) is id_type]
-            for delegate in select_components:
-                delegate.gui_rep()
-        imgui.end()
 
         # Scene Info
         imgui.begin("Basic Info")

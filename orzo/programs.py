@@ -69,6 +69,13 @@ class PhongProgram(MeshProgram):
         if self.window.draw_bboxes:
             mesh.draw_bbox(projection_matrix, model_matrix, camera_matrix, self.bbox_program, bbox())  # Everything pushed to origin for x and y, something up with bbox()?
 
+        # Add highlight effect if there is a selection, everything not selected gets a little dull
+        selection = self.window.selection
+        if selection is not None and selection.id != mesh.entity_id:
+            self.program["attention"].value = 0.5
+        else:
+            self.program["attention"].value = 1.0
+
         # Only invert matrix / calculate camera position if camera is moved
         if list(camera_matrix) != PhongProgram.current_camera_matrix:
             camera_world = np.linalg.inv(camera_matrix)          
