@@ -96,7 +96,7 @@ class MethodDelegate(Method):
         client (client object): 
             client delegate is a part of
     """
-    current_args = {}
+    current_args: Optional[dict] = {}
 
     def gui_rep(self):
         """Representation to be displayed in GUI"""
@@ -206,8 +206,8 @@ class TableDelegate(Table):
             id group for delegate in state and table on server
     """
 
-    method_delegates = []
-    signal_delegates = []
+    method_delegates: list = []
+    signal_delegates: list = []
 
     def on_new(self, message: dict):
         self.method_delegates = [self.client.get_delegate(id) for id in self.methods_list]
@@ -252,16 +252,17 @@ class EntityDelegate(Entity):
         name (str): Name of the entity, defaults to 'No-Name Entity'
     """
 
-    node: mglw.scene.Node = mglw.scene.Node()
-    patch_nodes = []
+    node: Optional[mglw.scene.Node] = None
+    patch_nodes: list = []
     light_delegates: list[LightDelegate] = []
     geometry_delegate: GeometryDelegate = None
     methods_list: Optional[List[MethodID]] = []
     signals_list: Optional[List[SignalID]] = []
-    method_delegates: list[MethodDelegate] = None
-    signal_delegates: list[SignalDelegate] = None
-    table_delegate: TableDelegate = None
-    num_instances: int = 0
+    method_delegates: Optional[list[MethodDelegate]] = None
+    signal_delegates: Optional[list[SignalDelegate]] = None
+    table_delegate: Optional[TableDelegate] = None
+    num_instances: Optional[int] = 0
+    instance_positions: Optional[np.ndarray] = None
 
     def render_entity(self, window):
         """Render the mesh associated with this delegate
@@ -377,13 +378,13 @@ class EntityDelegate(Entity):
 
     def set_up_node(self, window):
 
-        self.node.name = f"{self.id}'s Node"
-
-        # Matrices
+        # Get local matrix
         if self.transform is not None:
-            self.node.matrix = self.transform
+            matrix = self.transform
         else:
-            self.node.matrix = np.identity(4, np.float32)
+            matrix = np.identity(4, np.float32)
+
+        self.node = mglw.scene.Node(f"{self.id}'s Node", matrix=matrix)
         self.node.matrix_global = self.get_world_transform()
 
         # Update Scene / State
@@ -487,8 +488,8 @@ class EntityDelegate(Entity):
 
 class PlotDelegate(Plot):
 
-    method_delegates = []
-    signal_delegates = []
+    method_delegates: list = []
+    signal_delegates: list = []
 
     def on_new(self, message: dict):
         self.method_delegates = [self.client.get_delegate(id) for id in self.methods_list]
@@ -710,16 +711,11 @@ class GeometryDelegate(Geometry):
                 instances.bb = bounding_box
                 entity.influence = bounding_box
 
-            # For debugging, instances...
-            # instance_list = np.frombuffer(instance_bytes, np.single).tolist()
-            # positions = []
-            # rotations = []
-            # for i in range(num_instances):
-            #     j = 16 * i
-            #     positions.append(instance_list[j:j+3])
-            #     rotations.append(instance_list[j+8:j+12])
-            # print(f"Instance rendering positions: \n{positions}")
-            # print(f"Instance rendering rotations: \n{rotations}")
+            # Store local instance positions, useful for instance ray checking
+            insts = np.frombuffer(instance_bytes, np.single).tolist()
+            positions = [insts[i:i+3] for i in range(0, len(insts), 16)]
+            entity.instance_positions = np.array(positions)
+            entity.instance_positions = np.pad(entity.instance_positions, ((0, 0), (0, 1)), constant_values=1)
 
         else:
             num_instances = 0
@@ -872,7 +868,7 @@ class ImageDelegate(Image):
     components: int = None
     bytes: bytes = None
     texture_id: int = None
-    component_map = {
+    component_map: dict = {
         "RGB": 3,
         "RGBA": 4
     }
@@ -942,13 +938,13 @@ class SamplerDelegate(Sampler):
     rep_y: bool = None
     mglw_sampler: moderngl.Sampler = None
 
-    FILTER_MAP = {
+    FILTER_MAP: dict = {
         "NEAREST": moderngl.NEAREST,
         "LINEAR": moderngl.LINEAR,
         "LINEAR_MIPMAP_LINEAR": moderngl.LINEAR_MIPMAP_LINEAR,
     }
 
-    SAMPLER_MODE_MAP = {
+    SAMPLER_MODE_MAP: dict = {
         "CLAMP_TO_EDGE": False,
         "REPEAT": True,
         "MIRRORED_REPEAT": True  # This is off but mglw only allows for boolean

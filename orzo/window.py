@@ -57,7 +57,7 @@ def normalize_device_coordinates(x, y, width, height):
     return x, y
 
 
-def intersection(ray_direction, ray_origin, bbox_min, bbox_max):
+def intersection(ray_direction, ray_origin, bbox_min, bbox_max, entity):
     """Ray-BoundingBox intersection test"""
     t_near = float('-inf')
     t_far = float('inf')
@@ -74,7 +74,22 @@ def intersection(ray_direction, ray_origin, bbox_min, bbox_max):
 
     # if there is an intersection, return the distance
     if t_near <= t_far:
-        return t_near
+        if entity.num_instances == 0:
+            return t_near
+        else:
+            # If there are instances, transform to world space and check distance to the closest one
+            # if entity.num_instances > 0:
+            #     instance_positions = entity.instance_positions
+            #     instance_positions = np.array([np.matmul(pos, mesh.transform) for pos in instance_positions])
+            #     instance_positions = instance_positions[:, :3]  # Remove homogeneous coordinate for dist calculation
+            #     dists = np.linalg.norm(instance_positions - self.camera_position, axis=1)
+            #     dist = np.min(dists)
+            # else:
+            #     dist = hit
+
+            # Work in progress...
+            return t_near
+
     return False
 
 
@@ -258,19 +273,22 @@ class Window(mglw.WindowConfig):
         closest_mesh = None
         for mesh in self.scene.meshes:
             # Convert bounding box to world space - Pad out to vec4, then transform by entity transform
+            entity = self.client.get_delegate(mesh.entity_id)
             bbox_min = np.array([*mesh.bbox_min, 1.0])
             bbox_min = np.matmul(bbox_min, mesh.transform)
             bbox_max = np.array([*mesh.bbox_max, 1.0])
             bbox_max = np.matmul(bbox_max, mesh.transform)
-            hit = intersection(ray, self.camera_position, bbox_min, bbox_max)
+            hit = intersection(ray, self.camera_position, bbox_min, bbox_max, entity)
+
+            # If intersection, get delegate and check if closest
             if hit and hit < closest:
                 closest = hit
-                closest_mesh = mesh
+                closest_mesh = entity
 
         # Set selection in window state
         if closest_mesh:
-            self.selection = self.client.get_delegate(closest_mesh.entity_id)
-            logging.info(f"Clicked Mesh: {closest_mesh} - {closest_mesh.entity_id}")
+            self.selection = closest_mesh
+            logging.info(f"Clicked Mesh: {closest_mesh}")
         else:
             self.selection = None
 
@@ -349,7 +367,7 @@ class Window(mglw.WindowConfig):
 
         # Render skybox
         self.ctx.front_face = 'cw'
-        self.skybox_texture.use()  # Not sure about location... need to check
+        self.skybox_texture.use()
         self.skybox_program['m_proj'].write(self.camera.projection.matrix)
         self.skybox_program['m_cam'].write(self.camera.matrix)
         self.skybox.render(self.skybox_program)
