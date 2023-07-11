@@ -57,7 +57,7 @@ def normalize_device_coordinates(x, y, width, height):
     return x, y
 
 
-def intersection(ray_direction, ray_origin, bbox_min, bbox_max, entity):
+def intersection(ray_direction, ray_origin, bbox_min, bbox_max, entity=None):
     """Ray-BoundingBox intersection test"""
     t_near = float('-inf')
     t_far = float('inf')
@@ -74,21 +74,24 @@ def intersection(ray_direction, ray_origin, bbox_min, bbox_max, entity):
 
     # if there is an intersection, return the distance
     if t_near <= t_far:
-        if entity.num_instances == 0:
-            return t_near
-        else:
-            # If there are instances, transform to world space and check distance to the closest one
-            # if entity.num_instances > 0:
-            #     instance_positions = entity.instance_positions
-            #     instance_positions = np.array([np.matmul(pos, mesh.transform) for pos in instance_positions])
-            #     instance_positions = instance_positions[:, :3]  # Remove homogeneous coordinate for dist calculation
-            #     dists = np.linalg.norm(instance_positions - self.camera_position, axis=1)
-            #     dist = np.min(dists)
-            # else:
-            #     dist = hit
 
-            # Work in progress...
-            return t_near
+        return t_near
+
+        # if entity.num_instances == 0:
+        #     return t_near
+        # else:
+        #     # If there are instances, transform to world space and check distance to the closest one
+        #     # if entity.num_instances > 0:
+        #     #     instance_positions = entity.instance_positions
+        #     #     instance_positions = np.array([np.matmul(pos, mesh.transform) for pos in instance_positions])
+        #     #     instance_positions = instance_positions[:, :3]  # Remove homogeneous coordinate for dist calculation
+        #     #     dists = np.linalg.norm(instance_positions - self.camera_position, axis=1)
+        #     #     dist = np.min(dists)
+        #     # else:
+        #     #     dist = hit
+        #
+        #     # Work in progress...
+        #     return t_near
 
     return False
 
