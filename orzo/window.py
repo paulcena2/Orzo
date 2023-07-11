@@ -436,6 +436,18 @@ class Window(mglw.WindowConfig):
 
         # Main Menu
         if imgui.begin_main_menu_bar():
+
+            if imgui.begin_menu("State", True):
+                for id_type in penne.id_map.values():
+
+                    expanded, visible = imgui.collapsing_header(f"{SPECIFIER_MAP[id_type]}", visible=True)
+                    if not expanded:
+                        continue
+
+                    select_components = [component for id, component in state.items() if type(id) is id_type]
+                    for delegate in select_components:
+                        delegate.gui_rep()
+                imgui.end_menu()
             if imgui.begin_menu("File", True):
 
                 clicked_quit, selected_quit = imgui.menu_item("Quit", 'Cmd+Q', False, True)
@@ -473,19 +485,6 @@ class Window(mglw.WindowConfig):
 
                 imgui.end_menu()
             imgui.end_main_menu_bar()
-
-        # State Inspector
-        imgui.begin("State")
-        for id_type in penne.id_map.values():
-
-            expanded, visible = imgui.collapsing_header(f"{SPECIFIER_MAP[id_type]}", visible=True)
-            if not expanded:
-                continue
-
-            select_components = [component for id, component in state.items() if type(id) is id_type]
-            for delegate in select_components:
-                delegate.gui_rep()
-        imgui.end()
 
         # Scene Info
         imgui.begin("Basic Info")
