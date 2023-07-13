@@ -264,6 +264,7 @@ class EntityDelegate(Entity):
     table_delegate: Optional[TableDelegate] = None
     num_instances: Optional[int] = 0
     instance_positions: Optional[np.ndarray] = None
+    np_transform: Optional[np.ndarray] = None
 
     def render_entity(self, window):
         """Render the mesh associated with this delegate
@@ -330,8 +331,8 @@ class EntityDelegate(Entity):
     def get_world_transform(self):
         """Recursive function to get world transform for an entity"""
 
-        if self.transform is not None:
-            local_transform = self.transform
+        if self.np_transform is not None:
+            local_transform = self.np_transform
         else:
             local_transform = np.identity(4, np.float32)
 
@@ -367,9 +368,9 @@ class EntityDelegate(Entity):
     def request_move(self, dx, dy, dz):
         """Take 2d drag and get 3d coordinates to move entity"""
 
-        current_mat = self.transform if self.transform is not None else np.identity(4, np.float32)
+        current_mat = self.np_transform if self.np_transform is not None else np.identity(4, np.float32)
         translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
-        self.transform = np.matmul(current_mat, translation_mat)
+        self.np_transform = np.matmul(current_mat, translation_mat)
         world_transform = self.get_world_transform()
         x, y, z = world_transform[3, :3]
 
@@ -382,14 +383,14 @@ class EntityDelegate(Entity):
         x = Quaternion.from_x_rotation(dx)
         y = Quaternion.from_y_rotation(dy)
         z = Quaternion.from_z_rotation(dz)
-        new_quat = x * y * z
+        new_quat = x.cross(y).cross(z)
         self.set_rotation(list(new_quat))
 
     def set_up_node(self, window):
 
         # Get local matrix
-        if self.transform is not None:
-            matrix = self.transform
+        if self.np_transform is not None:
+            matrix = self.np_transform
         else:
             matrix = np.identity(4, np.float32)
 
@@ -407,10 +408,10 @@ class EntityDelegate(Entity):
 
     def on_new(self, message: dict):
 
-        # Reformat transform
+        # Reformat transform and keep seperate
         if self.transform:
             # This keeps in col major order for MGLW
-            self.transform = np.array(self.transform, np.float32).reshape(4, 4)
+            self.np_transform = np.array(self.transform, np.float32).reshape(4, 4)
 
         # Render mesh
         if self.render_rep:
@@ -432,8 +433,8 @@ class EntityDelegate(Entity):
 
         # Recursively update mesh transforms if changed
         if "transform" in message or "parent" in message:
-            self.transform = np.array(self.transform, np.float32).reshape(4, 4)
-            self.node.matrix = self.transform
+            self.np_transform = np.array(self.transform, np.float32).reshape(4, 4)
+            self.node.matrix = self.np_transform
             self.node.matrix_global = self.get_world_transform()
             self.update_node_transform(self.node)
 
@@ -620,7 +621,7 @@ class GeometryDelegate(Geometry):
 
         # Extract key attributes
         scene = window.scene
-        transform = entity.transform if entity.transform is not None else np.eye(4)
+        transform = entity.np_transform if entity.np_transform is not None else np.eye(4)
         instances = entity.render_rep.instances
         if entity.influence:
             bounding_box = entity.influence

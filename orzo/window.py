@@ -5,6 +5,7 @@ import os
 import moderngl_window as mglw
 import moderngl
 import numpy as np
+from pyrr import Quaternion
 from pathlib import Path
 import imgui
 from imgui.integrations.pyglet import create_renderer
@@ -154,6 +155,7 @@ class Window(mglw.WindowConfig):
         self.selection = None  # Current entity that is selected
         self.last_click = None  # (x, y) of last click
         self.rotating = False  # Flag for rotating entity on drag
+        self.last_quat = None
 
         # Flag for rendering bounding boxes on mesh, can be toggled in GUI
         self.draw_bboxes = True
@@ -164,12 +166,7 @@ class Window(mglw.WindowConfig):
         self.skybox_program = self.load_program(os.path.join(current_dir, "shaders/sky.glsl"))
         self.skybox_texture = self.load_texture_2d("skybox.png", flip_y=False)
 
-    def get_world_translations(self, x, y, x_last, y_last):
-        """Get world translation from 2d mouse input"""
-
-        # Normalized Device Coordinates
-        x, y = normalize_device_coordinates(x, y, self.wnd.width, self.wnd.height)
-        x_last, y_last = normalize_device_coordinates(x_last, y_last, self.wnd.width, self.wnd.height)
+    def get_ray_from_click(self, x, y, world=True):
 
         # Get matrices
         projection = np.array(self.camera.projection.matrix)
@@ -177,29 +174,61 @@ class Window(mglw.WindowConfig):
         inverse_projection = np.linalg.inv(projection)
         inverse_view = np.linalg.inv(view)
 
-        # Make vectors for click and release locations
-        distance = get_distance_to_mesh(self.camera_position, self.selection)  # This is a rough estimate -> error down the road
-        click_vec = np.array([x_last, y_last, -1.0, distance], dtype=np.float32)
-        release_vec = np.array([x, y, -1.0, distance], dtype=np.float32)
+        # Normalized Device Coordinates
+        x, y = normalize_device_coordinates(x, y, self.wnd.width, self.wnd.height)
 
-        # Reverse perspective division
-        click_vec[0:3] *= distance
-        release_vec[0:3] *= distance
+        # Make vectors for click and release locations
+        if world:  # use distance to mesh as part of ray length
+            distance = get_distance_to_mesh(self.camera_position, self.selection)  # This is a rough estimate -> error down the road
+            ray_clip = np.array([x, y, -1.0, distance], dtype=np.float32)
+
+            # Reverse perspective division
+            ray_clip[0:3] *= distance
+        else:
+            ray_clip = np.array([x, y, -1.0, 1.0], dtype=np.float32)
 
         # To Eye-Space
-        click_vec = np.matmul(click_vec, inverse_projection)
-        release_vec = np.matmul(release_vec, inverse_projection)
+        ray_eye = np.matmul(ray_clip, inverse_projection)
+        if not world:
+            ray_eye[2], ray_eye[3] = -1.0, 0.0
+            norm_factor = np.linalg.norm(ray_eye)
+            ray_eye = ray_eye / norm_factor if norm_factor != 0 else ray_eye
 
         # To World-Space
-        click_vec = np.matmul(click_vec, inverse_view)
-        release_vec = np.matmul(release_vec, inverse_view)
+        ray_world = np.matmul(ray_eye, inverse_view)
 
-        # Reformat final ray and normalize
-        click_vec = click_vec[:3]
-        release_vec = release_vec[:3]
+        # Reformat final ray
+        ray = ray_world[:3]
+        if not world:
+            norm_factor = np.linalg.norm(ray)
+            ray /= norm_factor if norm_factor != 0 else 1
+        return ray
+
+    def get_world_translations(self, x, y, x_last, y_last):
+        """Get world translation from 2d mouse input"""
+
+        # Get rays
+        click_vec = self.get_ray_from_click(x_last, y_last)
+        release_vec = self.get_ray_from_click(x, y)
 
         # Get the difference between the two vectors
         return release_vec - click_vec
+
+    def get_world_rotation(self, x, y, x_last, y_last):
+
+        # Get rays
+        click_vec = self.get_ray_from_click(x_last, y_last, world=False)
+        release_vec = self.get_ray_from_click(x, y, world=False)
+
+        # Get axis of rotation with cross product
+        axis = np.cross(click_vec, release_vec)
+
+        # Get angle of rotation with dot product
+        # angle = np.arccos(np.dot(release_vec, click_vec))
+        angle = .05
+
+        # Create quaternion
+        return Quaternion.from_axis_rotation(axis, angle)
 
     def key_event(self, key, action, modifiers):
 
@@ -254,33 +283,13 @@ class Window(mglw.WindowConfig):
         # Pass event to gui
         self.gui.mouse_press_event(x, y, button)
 
-        # Convert to normalized device coordinates
-        self.last_click = (x, y)
-        x, y = normalize_device_coordinates(x, y, self.wnd.width, self.wnd.height)
-        print(f"Mouse press: {x}, {y}")
-
         # If the mouse is over a window, don't do anything
         if imgui.is_window_hovered(imgui.HOVERED_ANY_WINDOW):
             return
 
-        # Get matrices
-        projection = np.array(self.camera.projection.matrix)
-        view = np.array(self.camera.matrix)
-        inverse_projection = np.linalg.inv(projection)
-        inverse_view = np.linalg.inv(view)
-
-        # Device space -> clip space -> eye space -> world space
-        ray_clip = np.array([x, y, -1.0, 1.0], dtype=np.float32)
-        ray_eye = np.matmul(ray_clip, inverse_projection)  # Pre-multiplying col-major = post-multiplying row-major
-        ray_eye[2], ray_eye[3] = -1.0, 0.0
-        norm_factor = np.linalg.norm(ray_eye)
-        ray_eye = ray_eye / norm_factor if norm_factor != 0 else ray_eye
-        ray_world = np.matmul(ray_eye, inverse_view)
-
-        # Reformat final ray and normalize
-        ray = ray_world[:3]
-        norm_factor = np.linalg.norm(ray)
-        ray = ray / norm_factor if norm_factor != 0 else ray
+        # Get 3d world ray
+        self.last_click = (x, y)
+        ray = self.get_ray_from_click(x, y, world=False)
 
         # Check meshes for intersection with bounding box
         closest_dtc = float('inf')
@@ -330,19 +339,22 @@ class Window(mglw.WindowConfig):
             return
 
         x_last, y_last = x - dx, y - dy
-        dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
         current_mat = self.selection.node.matrix
+
+        if dx == 0 and dy == 0:
+            return
 
         # If r is held, rotate, if not translate
         if self.rotating:
-            print("Rotating")
-
+            quat = self.get_world_rotation(x, y, x_last, y_last)
+            self.selection.node.matrix = np.matmul(current_mat, quat.matrix44)
+            self.selection.node.matrix_global = self.selection.node.matrix
+            self.last_quat = quat
         else:
+            dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
             translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
             self.selection.node.matrix = np.matmul(current_mat, translation_mat)
             self.selection.node.matrix_global = self.selection.node.matrix
-
-        print(f"New Matrix: {self.selection.node.matrix}")
 
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
@@ -358,9 +370,8 @@ class Window(mglw.WindowConfig):
 
             try:
                 if self.rotating:
-                    x_last, y_last = self.last_click
-                    dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
-                    self.selection.request_rotate(dx, dy, dz)
+                    quat = Quaternion.from_matrix(self.selection.node.matrix_global)
+                    self.selection.set_rotation(quat.xyzw.tolist())
                 else:
                     x, y, z = self.selection.node.matrix_global[3, :3].astype(float)
                     self.selection.set_position([x, y, z])
@@ -423,7 +434,7 @@ class Window(mglw.WindowConfig):
         try:
             callback_info = Window.client.callback_queue.get(block=False)
             callback, args = callback_info
-            logging.info(f"Callback in render: {callback} \n\tw/ args: {args}")
+            logging.info(f"Callback in render: {callback.__name__} \n\tw/ args: {args}")
             callback(self, *args)
 
         except queue.Empty:
