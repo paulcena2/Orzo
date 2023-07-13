@@ -122,7 +122,7 @@ class Window(mglw.WindowConfig):
         self.camera = mglw.scene.camera.KeyboardCamera(self.wnd.keys, aspect_ratio=self.wnd.aspect_ratio)
         self.camera.projection.update(near=0.1, far=1000.0)  # Range where camera will cutoff
         self.camera.mouse_sensitivity = 0.1
-        self.camera.velocity = 1.0
+        self.camera.velocity = 2.0
         self.camera.zoom = 2.5
         self.camera_position = [0.0, 0.0, 0.0]
         # self.key_repeat = True
@@ -153,6 +153,7 @@ class Window(mglw.WindowConfig):
         self.args = {}
         self.selection = None  # Current entity that is selected
         self.last_click = None  # (x, y) of last click
+        self.rotating = False  # Flag for rotating entity on drag
 
         # Flag for rendering bounding boxes on mesh, can be toggled in GUI
         self.draw_bboxes = True
@@ -226,6 +227,12 @@ class Window(mglw.WindowConfig):
             # Workaround: try passing it to unicode char after for pyglet==2.0.7
             uni_char = get_char(self.wnd.keys, key)
             self.unicode_char_entered(uni_char.lower())
+
+        if key == keys.R:
+            if action == keys.ACTION_PRESS:
+                self.rotating = True
+            elif action == keys.ACTION_RELEASE:
+                self.rotating = False
 
     def mouse_position_event(self, x: int, y: int, dx, dy):
 
@@ -319,15 +326,21 @@ class Window(mglw.WindowConfig):
         # Pass event to gui
         self.gui.mouse_drag_event(x, y, dx, dy)
 
-        if not self.selection:
+        if not self.selection or imgui.is_window_hovered(imgui.HOVERED_ANY_WINDOW):
             return
 
         x_last, y_last = x - dx, y - dy
         dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
         current_mat = self.selection.node.matrix
-        translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
-        self.selection.node.matrix = np.matmul(current_mat, translation_mat)
-        self.selection.node.matrix_global = self.selection.node.matrix
+
+        # If r is held, rotate, if not translate
+        if self.rotating:
+            print("Rotating")
+
+        else:
+            translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
+            self.selection.node.matrix = np.matmul(current_mat, translation_mat)
+            self.selection.node.matrix_global = self.selection.node.matrix
 
         print(f"New Matrix: {self.selection.node.matrix}")
 
@@ -343,13 +356,17 @@ class Window(mglw.WindowConfig):
         # Calculate vectors and move if applicable
         if self.selection and self.last_click != (x, y):
 
-            x_last, y_last = self.last_click
-            dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
-
             try:
-                self.selection.request_move(dx, dy, dz)
-            except AttributeError:
-                logging.warning(f"Dragging {self.selection} failed")
+                if self.rotating:
+                    x_last, y_last = self.last_click
+                    dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
+                    self.selection.request_rotate(dx, dy, dz)
+                else:
+                    x, y, z = self.selection.node.matrix_global[3, :3].astype(float)
+                    self.selection.set_position([x, y, z])
+                    #self.selection.request_move(dx, dy, dz)
+            except AttributeError as e:
+                logging.warning(f"Dragging {self.selection} failed: {e}")
 
     def resize(self, width: int, height: int):
         self.gui.resize(width, height)
@@ -495,6 +512,8 @@ class Window(mglw.WindowConfig):
         imgui.begin("Basic Info")
         imgui.text(f"Camera Position: {self.camera_position}")
         imgui.text(f"Press 'Space' to toggle camera/GUI")
+        imgui.text(f"Click and drag an entity to move it")
+        imgui.text(f"Hold 'r' while dragging to rotate an entity")
         _, self.draw_bboxes = imgui.checkbox("Show Bounding Boxes", self.draw_bboxes)
         imgui.end()
 

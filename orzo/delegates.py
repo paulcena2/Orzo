@@ -12,8 +12,6 @@ import urllib.request
 import json
 import logging
 
-from . import programs
-
 from penne import *
 
 import moderngl_window as mglw
@@ -21,6 +19,9 @@ import moderngl
 import numpy as np
 from PIL import Image as img
 import imgui
+from pyrr import Quaternion
+
+from . import programs
 
 
 @dataclass
@@ -255,7 +256,7 @@ class EntityDelegate(Entity):
     node: Optional[mglw.scene.Node] = None
     patch_nodes: list = []
     light_delegates: list[LightDelegate] = []
-    geometry_delegate: GeometryDelegate = None
+    geometry_delegate: Optional[GeometryDelegate] = None
     methods_list: Optional[List[MethodID]] = []
     signals_list: Optional[List[SignalID]] = []
     method_delegates: Optional[list[MethodDelegate]] = None
@@ -372,9 +373,17 @@ class EntityDelegate(Entity):
         world_transform = self.get_world_transform()
         x, y, z = world_transform[3, :3]
 
-        # self.ent_move(x, y, z)  # Maybe something like this later for injected methods
-        method = self.client.get_delegate("move")
-        method.invoke(self, [x, y, z])
+        self.set_position([x, y, z])
+
+    def request_rotate(self, dx, dy, dz):
+        """Take drag and get quaternion to rotate entity"""
+
+        # Get direction vector - No idea if this is valid
+        x = Quaternion.from_x_rotation(dx)
+        y = Quaternion.from_y_rotation(dy)
+        z = Quaternion.from_z_rotation(dz)
+        new_quat = x * y * z
+        self.set_rotation(list(new_quat))
 
     def set_up_node(self, window):
 
@@ -403,9 +412,6 @@ class EntityDelegate(Entity):
             # This keeps in col major order for MGLW
             self.transform = np.array(self.transform, np.float32).reshape(4, 4)
 
-        # Set up MGLW node in scene - GONNA TRY MOVING INTO RENDER_ENTITY
-        # self.client.callback_queue.put((self.set_up_node, []))
-
         # Render mesh
         if self.render_rep:
             self.client.callback_queue.put((self.render_entity, []))
@@ -415,10 +421,21 @@ class EntityDelegate(Entity):
             self.client.callback_queue.put((self.attach_lights, []))
 
         # Hooke up methods and signals
+        if self.methods_list:
+            inject_methods(self, self.methods_list)
+        if self.signals_list:
+            inject_signals(self, self.signals_list)
         self.method_delegates = [self.client.get_delegate(id) for id in self.methods_list]
         self.signal_delegates = [self.client.get_delegate(id) for id in self.signals_list]
 
     def on_update(self, message: dict):
+
+        # Recursively update mesh transforms if changed
+        if "transform" in message or "parent" in message:
+            self.transform = np.array(self.transform, np.float32).reshape(4, 4)
+            self.node.matrix = self.transform
+            self.node.matrix_global = self.get_world_transform()
+            self.update_node_transform(self.node)
 
         # FIX RENDER REP IN ANY CHILD - figure out way to keep track of children and best way to recurse changes
         # What changes would get passed down? just transform?
@@ -432,17 +449,11 @@ class EntityDelegate(Entity):
 
         # Update attached methods and signals from updated lists
         if "methods_list" in message:
+            inject_methods(self, self.methods_list)
             self.method_delegates = [self.client.get_delegate(id) for id in self.methods_list]
         if "signals_list" in message:
+            inject_signals(self, self.signals_list)
             self.signal_delegates = [self.client.get_delegate(id) for id in self.signals_list]
-
-        # Recursively update mesh transforms if changed
-        if "transform" in message or "parent" in message:
-
-            self.transform = np.array(self.transform, np.float32).reshape(4, 4)
-            self.node.matrix = self.transform
-            self.node.matrix_global = self.get_world_transform()
-            self.update_node_transform(self.node)
 
     def on_remove(self, message: dict):
 
