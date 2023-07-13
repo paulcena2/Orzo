@@ -76,6 +76,8 @@ class PhongProgram(MeshProgram):
         else:
             self.program["attention"].value = 1.0
 
+        # If mesh is selected, draw widgets
+
         # Only invert matrix / calculate camera position if camera is moved
         if list(camera_matrix) != PhongProgram.current_camera_matrix:
             camera_world = np.linalg.inv(camera_matrix)          

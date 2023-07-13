@@ -12,8 +12,6 @@ import urllib.request
 import json
 import logging
 
-from . import programs
-
 from penne import *
 
 import moderngl_window as mglw
@@ -21,6 +19,9 @@ import moderngl
 import numpy as np
 from PIL import Image as img
 import imgui
+from pyrr import Quaternion
+
+from . import programs
 
 
 @dataclass
@@ -255,7 +256,7 @@ class EntityDelegate(Entity):
     node: Optional[mglw.scene.Node] = None
     patch_nodes: list = []
     light_delegates: list[LightDelegate] = []
-    geometry_delegate: GeometryDelegate = None
+    geometry_delegate: Optional[GeometryDelegate] = None
     methods_list: Optional[List[MethodID]] = []
     signals_list: Optional[List[SignalID]] = []
     method_delegates: Optional[list[MethodDelegate]] = None
@@ -263,6 +264,7 @@ class EntityDelegate(Entity):
     table_delegate: Optional[TableDelegate] = None
     num_instances: Optional[int] = 0
     instance_positions: Optional[np.ndarray] = None
+    np_transform: Optional[np.ndarray] = None
 
     def render_entity(self, window):
         """Render the mesh associated with this delegate
@@ -329,8 +331,8 @@ class EntityDelegate(Entity):
     def get_world_transform(self):
         """Recursive function to get world transform for an entity"""
 
-        if self.transform is not None:
-            local_transform = self.transform
+        if self.np_transform is not None:
+            local_transform = self.np_transform
         else:
             local_transform = np.identity(4, np.float32)
 
@@ -366,21 +368,29 @@ class EntityDelegate(Entity):
     def request_move(self, dx, dy, dz):
         """Take 2d drag and get 3d coordinates to move entity"""
 
-        current_mat = self.transform if self.transform is not None else np.identity(4, np.float32)
+        current_mat = self.np_transform if self.np_transform is not None else np.identity(4, np.float32)
         translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
-        self.transform = np.matmul(current_mat, translation_mat)
+        self.np_transform = np.matmul(current_mat, translation_mat)
         world_transform = self.get_world_transform()
         x, y, z = world_transform[3, :3]
 
-        # self.ent_move(x, y, z)  # Maybe something like this later for injected methods
-        method = self.client.get_delegate("move")
-        method.invoke(self, [x, y, z])
+        self.set_position([x, y, z])
+
+    def request_rotate(self, dx, dy, dz):
+        """Take drag and get quaternion to rotate entity"""
+
+        # Get direction vector - No idea if this is valid
+        x = Quaternion.from_x_rotation(dx)
+        y = Quaternion.from_y_rotation(dy)
+        z = Quaternion.from_z_rotation(dz)
+        new_quat = x.cross(y).cross(z)
+        self.set_rotation(list(new_quat))
 
     def set_up_node(self, window):
 
         # Get local matrix
-        if self.transform is not None:
-            matrix = self.transform
+        if self.np_transform is not None:
+            matrix = self.np_transform
         else:
             matrix = np.identity(4, np.float32)
 
@@ -398,13 +408,10 @@ class EntityDelegate(Entity):
 
     def on_new(self, message: dict):
 
-        # Reformat transform
+        # Reformat transform and keep seperate
         if self.transform:
             # This keeps in col major order for MGLW
-            self.transform = np.array(self.transform, np.float32).reshape(4, 4)
-
-        # Set up MGLW node in scene - GONNA TRY MOVING INTO RENDER_ENTITY
-        # self.client.callback_queue.put((self.set_up_node, []))
+            self.np_transform = np.array(self.transform, np.float32).reshape(4, 4)
 
         # Render mesh
         if self.render_rep:
@@ -415,10 +422,21 @@ class EntityDelegate(Entity):
             self.client.callback_queue.put((self.attach_lights, []))
 
         # Hooke up methods and signals
+        if self.methods_list:
+            inject_methods(self, self.methods_list)
+        if self.signals_list:
+            inject_signals(self, self.signals_list)
         self.method_delegates = [self.client.get_delegate(id) for id in self.methods_list]
         self.signal_delegates = [self.client.get_delegate(id) for id in self.signals_list]
 
     def on_update(self, message: dict):
+
+        # Recursively update mesh transforms if changed
+        if "transform" in message or "parent" in message:
+            self.np_transform = np.array(self.transform, np.float32).reshape(4, 4)
+            self.node.matrix = self.np_transform
+            self.node.matrix_global = self.get_world_transform()
+            self.update_node_transform(self.node)
 
         # FIX RENDER REP IN ANY CHILD - figure out way to keep track of children and best way to recurse changes
         # What changes would get passed down? just transform?
@@ -432,17 +450,11 @@ class EntityDelegate(Entity):
 
         # Update attached methods and signals from updated lists
         if "methods_list" in message:
+            inject_methods(self, self.methods_list)
             self.method_delegates = [self.client.get_delegate(id) for id in self.methods_list]
         if "signals_list" in message:
+            inject_signals(self, self.signals_list)
             self.signal_delegates = [self.client.get_delegate(id) for id in self.signals_list]
-
-        # Recursively update mesh transforms if changed
-        if "transform" in message or "parent" in message:
-
-            self.transform = np.array(self.transform, np.float32).reshape(4, 4)
-            self.node.matrix = self.transform
-            self.node.matrix_global = self.get_world_transform()
-            self.update_node_transform(self.node)
 
     def on_remove(self, message: dict):
 
@@ -609,7 +621,7 @@ class GeometryDelegate(Geometry):
 
         # Extract key attributes
         scene = window.scene
-        transform = entity.transform if entity.transform is not None else np.eye(4)
+        transform = entity.np_transform if entity.np_transform is not None else np.eye(4)
         instances = entity.render_rep.instances
         if entity.influence:
             bounding_box = entity.influence
