@@ -155,7 +155,6 @@ class Window(mglw.WindowConfig):
         self.selection = None  # Current entity that is selected
         self.last_click = None  # (x, y) of last click
         self.rotating = False  # Flag for rotating entity on drag
-        self.last_quat = None
 
         # Flag for rendering bounding boxes on mesh, can be toggled in GUI
         self.draw_bboxes = True
@@ -222,6 +221,7 @@ class Window(mglw.WindowConfig):
 
         # Get axis of rotation with cross product
         axis = np.cross(click_vec, release_vec)
+        # axis = np.cross(release_vec, click_vec)
 
         # Get angle of rotation with dot product
         # angle = np.arccos(np.dot(release_vec, click_vec))
@@ -347,9 +347,11 @@ class Window(mglw.WindowConfig):
         # If r is held, rotate, if not translate
         if self.rotating:
             quat = self.get_world_rotation(x, y, x_last, y_last)
-            self.selection.node.matrix = np.matmul(current_mat, quat.matrix44)
-            self.selection.node.matrix_global = self.selection.node.matrix
-            self.last_quat = quat
+            pos = current_mat[3, :3]  # This seems like a hack, but gets rid of the translation component
+            new_mat = np.matmul(current_mat, quat.matrix44)
+            new_mat[3, :3] = pos
+            self.selection.node.matrix = new_mat
+            self.selection.node.matrix_global = new_mat
         else:
             dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
             translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
