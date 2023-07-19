@@ -352,6 +352,10 @@ class Window(mglw.WindowConfig):
             new_mat[3, :3] = pos
             self.selection.node.matrix = new_mat
             self.selection.node.matrix_global = new_mat
+            self.selection.node.mesh.transform = new_mat
+            # self.selection.node.children[0].matrix_global = new_mat
+            # Transorm is in node matrix, matrix global, children -> patch's node transform, mesh transform
+            # There is a mesh in the child node for the patch and also a mesh at the entity level -> double version
         else:
             dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
             translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
@@ -374,7 +378,8 @@ class Window(mglw.WindowConfig):
                 if self.rotating:
                     quat = Quaternion.from_matrix(self.selection.node.matrix_global)
                     self.selection.set_rotation(quat.xyzw.tolist())
-                else:
+
+                if not np.array_equal(self.selection.node.matrix_global, self.selection.node.children[0].matrix_global):
                     x, y, z = self.selection.node.matrix_global[3, :3].astype(float)
                     self.selection.set_position([x, y, z])
                     #self.selection.request_move(dx, dy, dz)

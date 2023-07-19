@@ -593,9 +593,9 @@ class GeometryDelegate(Geometry):
 
     def render_patch(self, patch, window, entity):
 
-        def get_attr_bytes(raw_bytes, offset, length, stride, format):
+        def extract_bytes(raw_bytes, offset, length, stride, format):
             attr_bytes = b''
-            starts = range(offset, length, stride)
+            starts = range(offset, offset + length, stride)
             for start in starts:
                 attr_bytes += raw_bytes[start:start+(format.size * format.num_components)]
             return attr_bytes
@@ -646,8 +646,11 @@ class GeometryDelegate(Geometry):
         if patch.indices:
             index = patch.indices
             index_view = self.client.get_delegate(index.view)
-            index_bytes = index_view.buffer_delegate.bytes[index.offset:]
-            index_size = FORMAT_MAP[index.format].size
+            format = FORMAT_MAP[index.format]
+            index_size = format.size
+            stride = index_view.stride if index.stride != 0 else index_size * format.num_components
+            offset = index_view.offset + index.offset
+            index_bytes = extract_bytes(index_view.buffer_delegate.bytes, offset, index_view.length, stride, format)
         else:
             # Non-indexed primitives just use range - 0, 1, 2, 3, etc...
             index_bytes = np.arange(patch.vertex_count, dtype=np.single).tobytes()
@@ -664,7 +667,7 @@ class GeometryDelegate(Geometry):
             buffer_format = f"{format_info.num_components}{format_info.format}"
 
             # Extract bytes and create buffer for attr
-            attr_bytes = get_attr_bytes(buffer_bytes, attribute.offset, view.length, attribute.stride, format_info)
+            attr_bytes = extract_bytes(buffer_bytes, attribute.offset, view.length, attribute.stride, format_info)
 
             # Reformat colors to consistent u8vec4's
             if attribute.semantic == "COLOR":
