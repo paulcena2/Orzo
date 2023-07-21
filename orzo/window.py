@@ -11,6 +11,9 @@ import imgui
 from imgui.integrations.pyglet import create_renderer
 from moderngl_window.integrations.imgui import ModernglWindowRenderer
 import penne
+from PIL import Image
+
+from orzo import programs
 
 
 current_dir = os.path.dirname(__file__)
@@ -126,7 +129,9 @@ class Window(mglw.WindowConfig):
         self.camera.velocity = 2.0
         self.camera.zoom = 2.5
         self.camera_position = [0.0, 0.0, 0.0]
-        # self.key_repeat = True
+
+        # Set up Framebuffer - used for selection
+        self.fbo = self.ctx.simple_framebuffer((self.wnd.width, self.wnd.height), dtype='f4')
 
         # Window Options
         self.wnd.mouse_exclusivity = True
@@ -287,44 +292,20 @@ class Window(mglw.WindowConfig):
         if imgui.is_window_hovered(imgui.HOVERED_ANY_WINDOW):
             return
 
-        # Get 3d world ray
-        self.last_click = (x, y)
-        ray = self.get_ray_from_click(x, y, world=False)
+        # Get info from framebuffer and click coordinates
+        pixel_data = self.render_scene_to_framebuffer(x, y)
+        slot, gen, instance, hit = pixel_data[:4], pixel_data[4:8], pixel_data[8:], pixel_data[12:]
 
-        # Check meshes for intersection with bounding box
-        closest_dtc = float('inf')
-        closest_dtr = float('inf')
-        closest_mesh = None
-        for mesh in self.scene.meshes:
-            # Convert bounding box to world space - Pad out to vec4, then transform by entity transform
-            entity = self.client.get_delegate(mesh.entity_id)
-            bbox_min = np.array([*mesh.bbox_min, 1.0])
-            bbox_min = np.matmul(bbox_min, mesh.transform)
-            bbox_max = np.array([*mesh.bbox_max, 1.0])
-            bbox_max = np.matmul(bbox_max, mesh.transform)
-            if entity.instance_positions is not None:
-                instance_positions = np.array([np.matmul(pos, mesh.transform) for pos in entity.instance_positions])
-                hit = intersection(ray, self.camera_position, bbox_min, bbox_max, instance_positions)
-            else:
-                hit = intersection(ray, self.camera_position, bbox_min, bbox_max)
-
-            if not hit:  # No intersection with bounding box at all
-                continue
-
-            dist_to_ray, dist_to_camera = hit
-
-            # Closest if ray is closer than previous closest, or if ray is same distance but closer to camera
-            if dist_to_ray < closest_dtr or (dist_to_ray == closest_dtr and dist_to_camera < closest_dtc):
-                closest_dtr = dist_to_ray
-                closest_dtc = dist_to_camera
-                closest_mesh = entity
-
-        # Set selection in window state
-        if closest_mesh:
-            self.selection = closest_mesh
-            logging.info(f"Clicked Mesh: {closest_mesh}")
-        else:
+        # No hit -> No selection
+        if int.from_bytes(hit, byteorder='little') == 0:
             self.selection = None
+            return
+
+        # We hit something! -> Get selection from slot and gen in buffer
+        slot, gen = int(np.frombuffer(slot, dtype=np.single)), int(np.frombuffer(gen, dtype=np.single))
+        entity_id = penne.EntityID(slot=slot, gen=gen)
+        logging.info(f"Clicked Entity: {entity_id}")
+        self.selection = self.client.get_delegate(entity_id)
 
     def mouse_drag_event(self, x: int, y: int, dx: int, dy: int):
         """Change appearance by changing the mesh's transform"""
@@ -353,7 +334,7 @@ class Window(mglw.WindowConfig):
             self.selection.node.matrix = new_mat
             self.selection.node.matrix_global = new_mat
             self.selection.node.mesh.transform = new_mat
-            # self.selection.node.children[0].matrix_global = new_mat
+            # self.selection.node.children[0].matrix_global = new_mat  # Can turn off preview
             # Transorm is in node matrix, matrix global, children -> patch's node transform, mesh transform
             # There is a mesh in the child node for the patch and also a mesh at the entity level -> double version
         else:
@@ -361,6 +342,7 @@ class Window(mglw.WindowConfig):
             translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
             self.selection.node.matrix = np.matmul(current_mat, translation_mat)
             self.selection.node.matrix_global = self.selection.node.matrix
+            self.selection.node.mesh.transform = self.selection.node.matrix
 
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
@@ -375,14 +357,19 @@ class Window(mglw.WindowConfig):
         if self.selection and self.last_click != (x, y):
 
             try:
-                if self.rotating:
+                preview = self.selection.node.matrix_global
+                old = self.selection.node.children[0].matrix_global
+
+                # Rotation
+                if not np.array_equal(preview[:3, :3], old[:3, :3]):
                     quat = Quaternion.from_matrix(self.selection.node.matrix_global)
                     self.selection.set_rotation(quat.xyzw.tolist())
 
-                if not np.array_equal(self.selection.node.matrix_global, self.selection.node.children[0].matrix_global):
+                # Position
+                if not np.array_equal(preview[3, :3], old[3, :3]):
                     x, y, z = self.selection.node.matrix_global[3, :3].astype(float)
                     self.selection.set_position([x, y, z])
-                    #self.selection.request_move(dx, dy, dz)
+
             except AttributeError as e:
                 logging.warning(f"Dragging {self.selection} failed: {e}")
 
@@ -405,6 +392,29 @@ class Window(mglw.WindowConfig):
         # key_num = self.wnd.keys[upper_char]
         # modifiers = mglw.context.base.keys.KeyModifiers()
         # self.key_event(key_num, 'ACTION_PRESS', modifiers)
+
+    def render_scene_to_framebuffer(self, x, y):
+
+        # Clear the framebuffer to max value 32 bit int
+        self.fbo.clear()
+
+        # Swap mesh programs to the frame select program
+        old_programs = {}
+        for mesh in self.scene.meshes:
+            old_programs[mesh.entity_id] = mesh.mesh_program  # Save the old program
+            mesh.mesh_program = programs.FrameSelectProgram(self, mesh.mesh_program.num_instances)
+
+        self.fbo.use()
+        self.scene.draw(
+            projection_matrix=self.camera.projection.matrix,
+            camera_matrix=self.camera.matrix
+        )
+
+        # Swap back to the old programs
+        for mesh in self.scene.meshes:
+            mesh.mesh_program = old_programs[mesh.entity_id]
+
+        return self.fbo.read(components=4, viewport=(x, self.wnd.height-y, 1, 1), dtype='f4')
 
     def render(self, time: float, frametime: float):
         """Renders a frame to on the window

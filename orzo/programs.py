@@ -31,7 +31,6 @@ class PhongProgram(MeshProgram):
         if num_instances == -1:
             vertex_path = os.path.join(current_dir, "shaders/base_vertex.glsl")
             vertex = open(vertex_path, 'r').read()
-            num_instances = 1
         else:
             vertex_path = os.path.join(current_dir, "shaders/instance_vertex.glsl")
             vertex = open(vertex_path, 'r').read()
@@ -144,7 +143,71 @@ class PhongProgram(MeshProgram):
         else:
             mesh.vao.ctx.enable(moderngl.CULL_FACE)
 
-        mesh.vao.render(self.program, instances=self.num_instances)
+        num_instances = 1 if self.num_instances == -1 else self.num_instances
+        mesh.vao.render(self.program, instances=num_instances)
     
+    def apply(self, mesh):
+        return self
+
+
+class FrameSelectProgram(MeshProgram):
+    """
+    Instance Rendering Program with Phong Shading
+    """
+
+    current_camera_matrix = None
+    camera_position = None
+
+    def __init__(self, wnd, num_instances, **kwargs):
+        super().__init__(program=None)
+        self.window = wnd
+        ctx = wnd.ctx
+        self.num_instances = num_instances
+
+        # Vertex Shader
+        if num_instances == -1:
+            vertex_path = os.path.join(current_dir, "shaders/base_vertex.glsl")
+            vertex = open(vertex_path, 'r').read()
+        else:
+            vertex_path = os.path.join(current_dir, "shaders/instance_vertex.glsl")
+            vertex = open(vertex_path, 'r').read()
+
+        # Fragment Shader
+        fragment_path = os.path.join(current_dir, "shaders/select_fragment.glsl")
+        fragment = open(fragment_path, 'r').read()
+
+        self.program = ctx.program(vertex_shader=vertex, fragment_shader=fragment)
+
+    def draw(
+            self,
+            mesh,
+            projection_matrix=None,
+            model_matrix=None,
+            camera_matrix=None,
+            time=0,
+    ):
+
+        model_matrix = model_matrix.astype(np.float32, order='C')
+        self.program["m_proj"].write(projection_matrix)
+        self.program["m_model"].write(model_matrix)
+        self.program["m_cam"].write(camera_matrix)
+        self.program["id"].value = tuple(mesh.entity_id)
+
+        # Only invert matrix / calculate camera position if camera is moved
+        if list(camera_matrix) != FrameSelectProgram.current_camera_matrix:
+            camera_world = np.linalg.inv(camera_matrix)
+            FrameSelectProgram.current_camera_matrix = list(camera_matrix)
+            FrameSelectProgram.camera_position = tuple(camera_world.m4[:3])
+        self.program["camera_position"].value = FrameSelectProgram.camera_position
+
+        # Hack to change culling for double_sided material
+        if mesh.material.double_sided:
+            mesh.vao.ctx.disable(moderngl.CULL_FACE)
+        else:
+            mesh.vao.ctx.enable(moderngl.CULL_FACE)
+
+        num_instances = 1 if self.num_instances == -1 else self.num_instances
+        mesh.vao.render(self.program, instances=num_instances)
+
     def apply(self, mesh):
         return self
