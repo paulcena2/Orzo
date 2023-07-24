@@ -248,6 +248,13 @@ class EntityDelegate(Entity):
     """Delegate for overarching entities
     
     Can be container for storing meshes, lights, or plots
+
+    In the scene, this is implemented with a moderngl-window node. This node has a local and global matrix which
+    are updated to reflect the entities transform. The node also has a list of children which contain patches for
+    the meshes. If the entity has a mesh, a version is stored in the entities node to use as a ghost preview. Another
+    is stored in the child node.
+
+    Lights are attached to the scene and updated with the entity's transform.
     
     Attributes:
         name (str): Name of the entity, defaults to 'No-Name Entity'
@@ -438,10 +445,12 @@ class EntityDelegate(Entity):
             self.node.matrix_global = self.get_world_transform()
             self.update_node_transform(self.node)
 
+            # Need to be able to update light positions
+
         # FIX RENDER REP IN ANY CHILD - figure out way to keep track of children and best way to recurse changes
         # What changes would get passed down? just transform?
         # probably need to pass that into the mesh in the node's transform
-        if "render_rep" in message or "transform" in message or "parent" in message:
+        if "render_rep" in message or "parent" in message:
             self.client.callback_queue.put((self.remove_from_render, []))
             self.client.callback_queue.put((self.render_entity, []))
 

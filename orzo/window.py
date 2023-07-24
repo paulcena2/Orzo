@@ -254,7 +254,8 @@ class Window(mglw.WindowConfig):
             if key == keys.C or key == keys.SPACE:
                 self.camera_enabled = not self.camera_enabled
                 self.wnd.mouse_exclusivity = self.camera_enabled
-                self.wnd.cursor = not self.camera_enabled
+                # self.wnd.cursor = not self.camera_enabled
+                self.wnd.cursor(not self.camera_enabled)
             if key == keys.P:
                 self.timer.toggle_pause()
 
@@ -262,6 +263,7 @@ class Window(mglw.WindowConfig):
             uni_char = get_char(self.wnd.keys, key)
             self.unicode_char_entered(uni_char.lower())
 
+        # Rotation modifier
         if key == keys.R:
             if action == keys.ACTION_PRESS:
                 self.rotating = True
@@ -372,6 +374,9 @@ class Window(mglw.WindowConfig):
             except AttributeError as e:
                 # TODO add extra handling to deal with ghost mesh
                 logging.warning(f"Dragging {self.selection} failed: {e}")
+
+            # Turn off ghosting effect
+            self.selection.node.mesh.ghosting = False
 
     def resize(self, width: int, height: int):
         self.gui.resize(width, height)
