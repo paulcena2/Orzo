@@ -254,8 +254,7 @@ class Window(mglw.WindowConfig):
             if key == keys.C or key == keys.SPACE:
                 self.camera_enabled = not self.camera_enabled
                 self.wnd.mouse_exclusivity = self.camera_enabled
-                # self.wnd.cursor = not self.camera_enabled
-                self.wnd.cursor(not self.camera_enabled)
+                self.wnd.cursor = not self.camera_enabled
             if key == keys.P:
                 self.timer.toggle_pause()
 
@@ -356,24 +355,26 @@ class Window(mglw.WindowConfig):
 
         # Calculate vectors and move if applicable
         if self.selection and self.last_click != (x, y):
+            preview = self.selection.node.matrix_global
+            old = self.selection.node.children[0].matrix_global
 
             try:
-                preview = self.selection.node.matrix_global
-                old = self.selection.node.children[0].matrix_global
-
                 # Rotation
                 if not np.array_equal(preview[:3, :3], old[:3, :3]):
-                    quat = Quaternion.from_matrix(self.selection.node.matrix_global)
+                    quat = Quaternion.from_matrix(preview)
                     self.selection.set_rotation(quat.xyzw.tolist())
 
                 # Position
                 if not np.array_equal(preview[3, :3], old[3, :3]):
-                    x, y, z = self.selection.node.matrix_global[3, :3].astype(float)
+                    x, y, z = preview[3, :3].astype(float)
                     self.selection.set_position([x, y, z])
 
+            # Server doesn't support these injected methods
             except AttributeError as e:
-                # TODO add extra handling to deal with ghost mesh
                 logging.warning(f"Dragging {self.selection} failed: {e}")
+                self.selection.node.matrix = old
+                self.selection.node.matrix_global = old
+                self.selection.node.mesh.transform = old
 
             # Turn off ghosting effect
             self.selection.node.mesh.ghosting = False
