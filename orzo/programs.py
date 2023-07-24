@@ -63,6 +63,7 @@ class PhongProgram(MeshProgram):
         self.program["normalization_factor"].value = mesh.norm_factor
         self.program["shininess"].value = self.window.shininess
         self.program["spec_strength"].value = self.window.spec_strength
+        self.program["ghosting"].value = mesh.ghosting
 
         # Draw bounding box if enabled
         if self.window.draw_bboxes:
@@ -74,8 +75,6 @@ class PhongProgram(MeshProgram):
             self.program["attention"].value = 0.5
         else:
             self.program["attention"].value = 1.0
-
-        # If mesh is selected, draw widgets
 
         # Only invert matrix / calculate camera position if camera is moved
         if list(camera_matrix) != PhongProgram.current_camera_matrix:

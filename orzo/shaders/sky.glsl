@@ -47,15 +47,6 @@ void main() {
 
     // Set the fragment color
     frag_color = vec4(skybox_color, 1.0);
-//
-//    // Get view vector
-//    vec3 view_vec = normalize(pos); // check
-//
-//    // Get equi-rectangular projection coordinates (sphere -> rectangle)
-//    float x = R * (pos - camera_pos);
-//    float y = ;
-//
-//    // Get texture color
-//    fragColor = texture(sky_texture, vec2(x, y));
+
 }
 #endif

@@ -23,6 +23,7 @@ uniform bool double_sided;
 uniform float shininess;
 uniform float spec_strength;
 uniform float attention;
+uniform bool ghosting;
 
 out vec4 f_color;
 
@@ -93,4 +94,9 @@ void main() {
         f_color += (diffuseColor * (diffuse + vec4(ambient, 1.0)) + specular) * intensity * attention;
         i += 1;
     }
+
+    // Add ghosting effect
+    if (ghosting)
+        f_color[3] = .5;
+
 }

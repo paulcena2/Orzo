@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 import io
 import urllib.request
 import json
-import logging
+import copy
 
 from penne import *
 
@@ -569,8 +569,8 @@ class GeometryDelegate(Geometry):
 
         if instance:
             instances = np.frombuffer(pos_bytes, np.float32)
-            instances = instances.reshape(-1, 16)
-            positions = instances[:, :3]
+            instances = instances.reshape(-1, 16)  # Break array into rows of 16 -> each row is an instance
+            positions = instances[:, :3]  # Get first three values stored in each instance -> position
             min_x, min_y, min_z = np.min(positions, axis=0)
             max_x, max_y, max_z = np.max(positions, axis=0)
         else:
@@ -708,6 +708,7 @@ class GeometryDelegate(Geometry):
         mesh.geometry_id = self.id
         mesh.entity_id = entity.id  # Can get delegate from mesh in click detection
         mesh.transform = transform  # Keep track of local transform, mostly for translating bbox in mesh.draw rn
+        mesh.ghosting = False  # Ghosting turned off then will be turned on when dragged
         entity.node.mesh = mesh  # Add mesh to entity's node, used to delete from scene graph later
 
         # Add instances to vao if applicable, also add appropriate mesh program
@@ -740,8 +741,10 @@ class GeometryDelegate(Geometry):
         mesh.bbox_min, mesh.bbox_max = np.array(bounding_box.min), np.array(bounding_box.max)
 
         # Add mesh as new node to scene graph, np.array(transform, order='C')
+        mesh_copy = copy.copy(mesh)
         scene.meshes.append(mesh)
-        new_mesh_node = mglw.scene.Node(f"{self.name}'s patch node", mesh=mesh, matrix=transform)
+        scene.meshes.append(mesh_copy)
+        new_mesh_node = mglw.scene.Node(f"{self.name}'s patch node", mesh=mesh_copy, matrix=transform)
 
         return new_mesh_node, num_instances
 

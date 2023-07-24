@@ -162,7 +162,7 @@ class Window(mglw.WindowConfig):
         self.rotating = False  # Flag for rotating entity on drag
 
         # Flag for rendering bounding boxes on mesh, can be toggled in GUI
-        self.draw_bboxes = True
+        self.draw_bboxes = False
 
         # Set up skybox
         self.skybox_on = True
@@ -316,21 +316,20 @@ class Window(mglw.WindowConfig):
         # Pass event to gui
         self.gui.mouse_drag_event(x, y, dx, dy)
 
-        if not self.selection or imgui.is_window_hovered(imgui.HOVERED_ANY_WINDOW):
+        if not self.selection or imgui.is_window_hovered(imgui.HOVERED_ANY_WINDOW) or (dx == 0 and dy == 0):
             return
 
         x_last, y_last = x - dx, y - dy
         current_mat = self.selection.node.matrix
 
-        if dx == 0 and dy == 0:
-            return
+        # Turn on ghosting effect
+        self.selection.node.mesh.ghosting = True
 
         # If r is held, rotate, if not translate
         if self.rotating:
             quat = self.get_world_rotation(x, y, x_last, y_last)
-            pos = current_mat[3, :3]  # This seems like a hack, but gets rid of the translation component
             new_mat = np.matmul(current_mat, quat.matrix44)
-            new_mat[3, :3] = pos
+            new_mat[3, :3] = current_mat[3, :3]  # This seems like a hack, but gets rid of the translation component
             self.selection.node.matrix = new_mat
             self.selection.node.matrix_global = new_mat
             self.selection.node.mesh.transform = new_mat
@@ -371,6 +370,7 @@ class Window(mglw.WindowConfig):
                     self.selection.set_position([x, y, z])
 
             except AttributeError as e:
+                # TODO add extra handling to deal with ghost mesh
                 logging.warning(f"Dragging {self.selection} failed: {e}")
 
     def resize(self, width: int, height: int):
@@ -414,6 +414,11 @@ class Window(mglw.WindowConfig):
         for mesh in self.scene.meshes:
             mesh.mesh_program = old_programs[mesh.entity_id]
 
+        # Show pillow image for debugging
+        # img = Image.frombytes('RGBA', (self.wnd.width, self.wnd.height), self.fbo.read(components=4))
+        # img = img.transpose(Image.FLIP_TOP_BOTTOM)
+        # img.show()
+
         return self.fbo.read(components=4, viewport=(x, self.wnd.height-y, 1, 1), dtype='f4')
 
     def render(self, time: float, frametime: float):
@@ -425,8 +430,7 @@ class Window(mglw.WindowConfig):
         Note: each callback has the window as the first arg
         """
 
-        self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE)  # was raising problem in IDE but seemed to work
-        # self.ctx.enable_only(moderngl.CULL_FACE)
+        self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE | moderngl.BLEND)  # was raising problem in IDE but seemed to work
 
         # Render skybox
         if self.skybox_on:
