@@ -70,7 +70,7 @@ class PhongProgram(MeshProgram):
             mesh.draw_bbox(projection_matrix, model_matrix, camera_matrix, self.bbox_program, bbox())  # Everything pushed to origin for x and y, something up with bbox()?
 
         # Add highlight effect if there is a selection, everything not selected gets a little dull
-        selection = self.window.selection
+        selection = self.window.selected_entity
         if selection is not None and selection.id != mesh.entity_id:
             self.program["attention"].value = 0.5
         else:
@@ -191,6 +191,12 @@ class FrameSelectProgram(MeshProgram):
         self.program["m_model"].write(model_matrix)
         self.program["m_cam"].write(camera_matrix)
         self.program["id"].value = tuple(mesh.entity_id)
+
+        # Set flag for widget or actual entity
+        if mesh.name == "Widget Mesh":
+            self.program["hit_value"].value = 2
+        else:
+            self.program["hit_value"].value = 1
 
         # Only invert matrix / calculate camera position if camera is moved
         if list(camera_matrix) != FrameSelectProgram.current_camera_matrix:

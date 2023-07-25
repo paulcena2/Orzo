@@ -131,7 +131,7 @@ class Window(mglw.WindowConfig):
         self.camera_position = [0.0, 0.0, 0.0]
 
         # Set up Framebuffer - used for selection
-        self.fbo = self.ctx.simple_framebuffer((self.wnd.width, self.wnd.height), dtype='f4')
+        self.fbo = self.ctx.simple_framebuffer((self.wnd.width, self.wnd.height), dtype='u4')
 
         # Window Options
         self.wnd.mouse_exclusivity = True
@@ -157,13 +157,13 @@ class Window(mglw.WindowConfig):
         # self.gui = create_renderer(self.wnd._window)
         self.gui = ModernglWindowRenderer(self.wnd)
         self.args = {}
-        self.selection = None  # Current entity that is selected
+        self.selected_entity = None  # Current entity that is selected
+        self.selected_instance = None  # Number instance that is selected
         self.last_click = None  # (x, y) of last click
         self.rotating = False  # Flag for rotating entity on drag
+        self.widgeting = False  # Flag for moving using widgets on drag
         self.arrow_mesh = self.load_scene("arrow.obj").meshes[0]
         self.arrow_mesh.mesh_program = programs.PhongProgram(self, 3)
-
-        # self.scene.meshes.append(self.arrow_mesh)
 
         # Flag for rendering bounding boxes on mesh, can be toggled in GUI
         self.draw_bboxes = False
@@ -187,7 +187,7 @@ class Window(mglw.WindowConfig):
 
         # Make vectors for click and release locations
         if world:  # use distance to mesh as part of ray length
-            distance = get_distance_to_mesh(self.camera_position, self.selection)  # This is a rough estimate -> error down the road
+            distance = get_distance_to_mesh(self.camera_position, self.selected_entity)  # This is a rough estimate -> error down the road
             ray_clip = np.array([x, y, -1.0, distance], dtype=np.float32)
 
             # Reverse perspective division
@@ -297,26 +297,37 @@ class Window(mglw.WindowConfig):
         if imgui.is_window_hovered(imgui.HOVERED_ANY_WINDOW):
             return
 
-        # Get info from framebuffer and click coordinates
+        # Get info from framebuffer and click coordinates, cast to ints
         pixel_data = self.render_scene_to_framebuffer(x, y)
         slot, gen, instance, hit = pixel_data[:4], pixel_data[4:8], pixel_data[8:12], pixel_data[12:]
+        slot = int(np.frombuffer(slot, dtype=np.single))  # Why are these floats? I'm not sure but it works
+        gen = int(np.frombuffer(gen, dtype=np.single))
+        instance = int(np.frombuffer(instance, dtype=np.single))
+        hit = int(np.frombuffer(hit, dtype=np.single))
 
         # No hit -> No selection
-        if int.from_bytes(hit, byteorder='little') == 0:
-            self.selection = None
+        if hit == 0:
+            self.selected_entity = None
+            self.selected_instance = None
+            self.widgeting = False
             self.remove_widgets()
             return
 
+        if hit == 2:
+            self.widgeting = True
+            print("Widgeting")
+        else:
+            self.widgeting = False
+
         # We hit something! -> Get selection from slot and gen in buffer
-        slot, gen = int(np.frombuffer(slot, dtype=np.single)), int(np.frombuffer(gen, dtype=np.single))
-        instance = int(np.frombuffer(instance, dtype=np.single))
         entity_id = penne.EntityID(slot=slot, gen=gen)
         clicked_entity = self.client.get_delegate(entity_id)
         logging.info(f"Clicked: {clicked_entity}, Instance: {instance}")
-        if clicked_entity is not self.selection:
-            if self.selection is not None:
+        self.selected_instance = instance
+        if clicked_entity is not self.selected_entity:
+            if self.selected_entity is not None:
                 self.remove_widgets()
-            self.selection = self.client.get_delegate(entity_id)
+            self.selected_entity = self.client.get_delegate(entity_id)
             self.add_widgets()
 
     def mouse_drag_event(self, x: int, y: int, dx: int, dy: int):
@@ -328,32 +339,47 @@ class Window(mglw.WindowConfig):
         # Pass event to gui
         self.gui.mouse_drag_event(x, y, dx, dy)
 
-        if not self.selection or imgui.is_window_hovered(imgui.HOVERED_ANY_WINDOW) or (dx == 0 and dy == 0):
+        if not self.selected_entity or imgui.is_window_hovered(imgui.HOVERED_ANY_WINDOW) or (dx == 0 and dy == 0):
             return
 
         x_last, y_last = x - dx, y - dy
-        current_mat = self.selection.node.matrix
+        selected_node = self.selected_entity.node
+        current_mat = selected_node.matrix
 
         # Turn on ghosting effect
-        self.selection.node.mesh.ghosting = True
+        selected_node.mesh.ghosting = True
+
+        # If widgeting, move using the widget's rules
+        if self.widgeting:
+            dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
+            if self.selected_instance == 0:  # x axis
+                translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, 0, 0, 1]])
+            elif self.selected_instance == 1:  # y axis
+                translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, dy, 0, 1]])
+            elif self.selected_instance == 2:  # z axis
+                translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, dz, 1]])
+            else:
+                translation_mat = np.identity(4)
+            selected_node.matrix = np.matmul(current_mat, translation_mat)
+            selected_node.matrix_global = selected_node.matrix
+            selected_node.mesh.transform = selected_node.matrix
 
         # If r is held, rotate, if not translate
-        if self.rotating:
+        elif self.rotating:
             quat = self.get_world_rotation(x, y, x_last, y_last)
             new_mat = np.matmul(current_mat, quat.matrix44)
             new_mat[3, :3] = current_mat[3, :3]  # This seems like a hack, but gets rid of the translation component
-            self.selection.node.matrix = new_mat
-            self.selection.node.matrix_global = new_mat
-            self.selection.node.mesh.transform = new_mat
-            # self.selection.node.children[0].matrix_global = new_mat  # Can turn off preview
+            selected_node.matrix = new_mat
+            selected_node.matrix_global = new_mat
+            selected_node.mesh.transform = new_mat
             # Transorm is in node matrix, matrix global, children -> patch's node transform, mesh transform
             # There is a mesh in the child node for the patch and also a mesh at the entity level -> double version
         else:
             dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
             translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
-            self.selection.node.matrix = np.matmul(current_mat, translation_mat)
-            self.selection.node.matrix_global = self.selection.node.matrix
-            self.selection.node.mesh.transform = self.selection.node.matrix
+            selected_node.matrix = np.matmul(current_mat, translation_mat)
+            selected_node.matrix_global = selected_node.matrix
+            selected_node.mesh.transform = selected_node.matrix
 
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
@@ -365,30 +391,30 @@ class Window(mglw.WindowConfig):
         self.gui.mouse_release_event(x, y, button)
 
         # Calculate vectors and move if applicable
-        if self.selection and self.last_click != (x, y):
-            preview = self.selection.node.matrix_global
-            old = self.selection.node.children[0].matrix_global
+        if self.selected_entity and self.last_click != (x, y):
+            preview = self.selected_entity.node.matrix_global
+            old = self.selected_entity.node.children[0].matrix_global
 
             try:
                 # Rotation
                 if not np.array_equal(preview[:3, :3], old[:3, :3]):
                     quat = Quaternion.from_matrix(preview)
-                    self.selection.set_rotation(quat.xyzw.tolist())
+                    self.selected_entity.set_rotation(quat.xyzw.tolist())
 
                 # Position
                 if not np.array_equal(preview[3, :3], old[3, :3]):
                     x, y, z = preview[3, :3].astype(float)
-                    self.selection.set_position([x, y, z])
+                    self.selected_entity.set_position([x, y, z])
 
             # Server doesn't support these injected methods
             except AttributeError as e:
-                logging.warning(f"Dragging {self.selection} failed: {e}")
-                self.selection.node.matrix = old
-                self.selection.node.matrix_global = old
-                self.selection.node.mesh.transform = old
+                logging.warning(f"Dragging {self.selected_entity} failed: {e}")
+                self.selected_entity.node.matrix = old
+                self.selected_entity.node.matrix_global = old
+                self.selected_entity.node.mesh.transform = old
 
             # Turn off ghosting effect
-            self.selection.node.mesh.ghosting = False
+            self.selected_entity.node.mesh.ghosting = False
 
     def resize(self, width: int, height: int):
         self.gui.resize(width, height)
@@ -417,14 +443,14 @@ class Window(mglw.WindowConfig):
               put the node as another child of the same selection node
         """
 
-        bbox_min, bbox_max = self.selection.node.mesh.bbox_min, self.selection.node.mesh.bbox_max
+        bbox_min, bbox_max = self.selected_entity.node.mesh.bbox_min, self.selected_entity.node.mesh.bbox_max
         bbox_center = (bbox_min + bbox_max) / 2
         bbox_size = bbox_max - bbox_min
 
         widget_mesh = self.arrow_mesh
         widget_mesh.name = "Widget Mesh"
         widget_mesh.norm_factor = (2 ** 32) - 1
-        widget_mesh.entity_id = self.selection.id
+        widget_mesh.entity_id = self.selected_entity.id
         vao = widget_mesh.vao
 
         # Add default colors
@@ -446,15 +472,15 @@ class Window(mglw.WindowConfig):
                 [.2 * bbox_size[0], .2 * bbox_size[0], .2 * bbox_size[0], 1]             # Scale proportionally
             ],
             [
+                [bbox_center[0], bbox_center[1] + bbox_size[1] / 2, bbox_center[2], 1],  # Centered at edge of bbox
+                [0.0, 0.0, 1.0, 0.5],  # Blue
+                [0.0, 0.0, 0.0, 1.0],  # No rotation
+                [.2 * bbox_size[0], .2 * bbox_size[0], .2 * bbox_size[0], 1]  # Scale proportionally
+            ],
+            [
                 [bbox_center[0], bbox_center[1], bbox_center[2] + bbox_size[2] / 2, 1],  # Centered at edge of bbox
                 [0.0, 1.0, 0.0, 0.5],                                                    # Green
                 [0.7071, 0.0, 0.0, -0.7071],                                             # Rotate 90 degrees around x
-                [.2 * bbox_size[0], .2 * bbox_size[0], .2 * bbox_size[0], 1]             # Scale proportionally
-            ],
-            [
-                [bbox_center[0], bbox_center[1] + bbox_size[1] / 2, bbox_center[2], 1],  # Centered at edge of bbox
-                [0.0, 0.0, 1.0, 0.5],                                                    # Blue
-                [0.0, 0.0, 0.0, 1.0],                                                    # No rotation
                 [.2 * bbox_size[0], .2 * bbox_size[0], .2 * bbox_size[0], 1]             # Scale proportionally
             ]
         ]
@@ -464,12 +490,12 @@ class Window(mglw.WindowConfig):
         # Add widgets to scene
         widget_node = mglw.scene.Node("Widgets", mesh=widget_mesh, matrix=np.identity(4, np.float32))
         widget_mesh.transform = np.identity(4, np.float32)
-        widget_node.matrix_global = self.selection.node.matrix_global  # Fix later with better transforms in place
+        widget_node.matrix_global = self.selected_entity.node.matrix_global  # Fix later with better transforms in place
         widget_mesh.ghosting = False
         widget_mesh.has_bounding_box = False
 
         self.scene.meshes.append(widget_mesh)
-        self.selection.node.add_child(widget_node)
+        self.selected_entity.node.add_child(widget_node)
         self.scene.nodes.append(widget_node)
 
     def remove_widgets(self):
@@ -507,7 +533,7 @@ class Window(mglw.WindowConfig):
         # img = img.transpose(Image.FLIP_TOP_BOTTOM)
         # img.show()
 
-        return self.fbo.read(components=4, viewport=(x, self.wnd.height-y, 1, 1), dtype='f4')
+        return self.fbo.read(components=4, viewport=(x, self.wnd.height-y, 1, 1), dtype='u4')
 
     def render(self, time: float, frametime: float):
         """Renders a frame to on the window
@@ -638,9 +664,10 @@ class Window(mglw.WindowConfig):
         imgui.end()
 
         # Render Document Methods and Signals or selection
-        if self.selection is None:
+        if self.selected_entity is None:
             self.render_document()
         else:
             imgui.begin("Selection")
-            self.selection.gui_rep()
+            self.selected_entity.gui_rep()
+            imgui.text(f"Instance: {self.selected_instance}")
             imgui.end()
