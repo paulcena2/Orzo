@@ -727,6 +727,7 @@ class GeometryDelegate(Geometry):
 
         # Set bounding box attributes
         mesh.bbox_min, mesh.bbox_max = np.array(bounding_box.min), np.array(bounding_box.max)
+        mesh.has_bounding_box = True
 
         # Add mesh as new node to scene graph, np.array(transform, order='C')
         mesh_copy = copy.copy(mesh)

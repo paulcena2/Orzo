@@ -299,7 +299,7 @@ class Window(mglw.WindowConfig):
 
         # Get info from framebuffer and click coordinates
         pixel_data = self.render_scene_to_framebuffer(x, y)
-        slot, gen, instance, hit = pixel_data[:4], pixel_data[4:8], pixel_data[8:], pixel_data[12:]
+        slot, gen, instance, hit = pixel_data[:4], pixel_data[4:8], pixel_data[8:12], pixel_data[12:]
 
         # No hit -> No selection
         if int.from_bytes(hit, byteorder='little') == 0:
@@ -309,10 +309,15 @@ class Window(mglw.WindowConfig):
 
         # We hit something! -> Get selection from slot and gen in buffer
         slot, gen = int(np.frombuffer(slot, dtype=np.single)), int(np.frombuffer(gen, dtype=np.single))
+        instance = int(np.frombuffer(instance, dtype=np.single))
         entity_id = penne.EntityID(slot=slot, gen=gen)
-        logging.info(f"Clicked Entity: {entity_id}")
-        self.selection = self.client.get_delegate(entity_id)
-        self.add_widgets()
+        clicked_entity = self.client.get_delegate(entity_id)
+        logging.info(f"Clicked: {clicked_entity}, Instance: {instance}")
+        if clicked_entity is not self.selection:
+            if self.selection is not None:
+                self.remove_widgets()
+            self.selection = self.client.get_delegate(entity_id)
+            self.add_widgets()
 
     def mouse_drag_event(self, x: int, y: int, dx: int, dy: int):
         """Change appearance by changing the mesh's transform"""
@@ -405,34 +410,6 @@ class Window(mglw.WindowConfig):
         # modifiers = mglw.context.base.keys.KeyModifiers()
         # self.key_event(key_num, 'ACTION_PRESS', modifiers)
 
-    def render_scene_to_framebuffer(self, x, y):
-
-        # Clear the framebuffer to max value 32 bit int
-        self.fbo.clear()
-
-        # Swap mesh programs to the frame select program
-        old_programs = {}
-        for mesh in self.scene.meshes:
-            old_programs[mesh.entity_id] = mesh.mesh_program  # Save the old program
-            mesh.mesh_program = programs.FrameSelectProgram(self, mesh.mesh_program.num_instances)
-
-        self.fbo.use()
-        self.scene.draw(
-            projection_matrix=self.camera.projection.matrix,
-            camera_matrix=self.camera.matrix
-        )
-
-        # Swap back to the old programs
-        for mesh in self.scene.meshes:
-            mesh.mesh_program = old_programs[mesh.entity_id]
-
-        # Show pillow image for debugging
-        # img = Image.frombytes('RGBA', (self.wnd.width, self.wnd.height), self.fbo.read(components=4))
-        # img = img.transpose(Image.FLIP_TOP_BOTTOM)
-        # img.show()
-
-        return self.fbo.read(components=4, viewport=(x, self.wnd.height-y, 1, 1), dtype='f4')
-
     def add_widgets(self):
         """Renders x, y, and z handle widgets for moving entities
 
@@ -445,6 +422,7 @@ class Window(mglw.WindowConfig):
         bbox_size = bbox_max - bbox_min
 
         widget_mesh = self.arrow_mesh
+        widget_mesh.name = "Widget Mesh"
         widget_mesh.norm_factor = (2 ** 32) - 1
         widget_mesh.entity_id = self.selection.id
         vao = widget_mesh.vao
@@ -465,19 +443,19 @@ class Window(mglw.WindowConfig):
                 [bbox_center[0] + bbox_size[0] / 2, bbox_center[1], bbox_center[2], 1],  # Centered at edge of bbox
                 [1.0, 0.0, 0.0, 0.5],                                                    # Red
                 [0.7071, 0.7071, 0.0, 0],                                                # Rotate 90 degrees around z
-                [.3 * bbox_size[0], .3 * bbox_size[0], .3 * bbox_size[0], 1]             # Scale proportionally
+                [.2 * bbox_size[0], .2 * bbox_size[0], .2 * bbox_size[0], 1]             # Scale proportionally
             ],
             [
                 [bbox_center[0], bbox_center[1], bbox_center[2] + bbox_size[2] / 2, 1],  # Centered at edge of bbox
                 [0.0, 1.0, 0.0, 0.5],                                                    # Green
-                [0.7071, 0.0, 0.0, -0.7071],                                                 # Rotate 90 degrees around x
-                [.3 * bbox_size[0], .3 * bbox_size[0], .3 * bbox_size[0], 1]             # Scale proportionally
+                [0.7071, 0.0, 0.0, -0.7071],                                             # Rotate 90 degrees around x
+                [.2 * bbox_size[0], .2 * bbox_size[0], .2 * bbox_size[0], 1]             # Scale proportionally
             ],
             [
                 [bbox_center[0], bbox_center[1] + bbox_size[1] / 2, bbox_center[2], 1],  # Centered at edge of bbox
                 [0.0, 0.0, 1.0, 0.5],                                                    # Blue
                 [0.0, 0.0, 0.0, 1.0],                                                    # No rotation
-                [.3 * bbox_size[0], .3 * bbox_size[0], .3 * bbox_size[0], 1]             # Scale proportionally
+                [.2 * bbox_size[0], .2 * bbox_size[0], .2 * bbox_size[0], 1]             # Scale proportionally
             ]
         ]
         instance_data = np.array(instances, np.float32)
@@ -486,11 +464,50 @@ class Window(mglw.WindowConfig):
         # Add widgets to scene
         widget_node = mglw.scene.Node("Widgets", mesh=widget_mesh, matrix=np.identity(4, np.float32))
         widget_mesh.transform = np.identity(4, np.float32)
-        widget_node.matrix_global = widget_mesh.transform  # Fix later with better transforms in place
+        widget_node.matrix_global = self.selection.node.matrix_global  # Fix later with better transforms in place
         widget_mesh.ghosting = False
+        widget_mesh.has_bounding_box = False
 
         self.scene.meshes.append(widget_mesh)
         self.selection.node.add_child(widget_node)
+        self.scene.nodes.append(widget_node)
+
+    def remove_widgets(self):
+
+        # Remove widgets from scene
+        widget_node = self.scene.find_node("Widgets")
+        self.scene.meshes.remove(widget_node.mesh)
+        entity = self.client.get_delegate(widget_node.mesh.entity_id)
+        entity.node.children.remove(widget_node)
+        self.scene.nodes.remove(widget_node)
+
+    def render_scene_to_framebuffer(self, x, y):
+
+        # Clear the framebuffer to max value 32 bit int
+        self.fbo.clear()
+
+        # Swap mesh programs to the frame select program
+        old_programs = {}
+        for mesh in self.scene.meshes:
+            old_programs[(mesh.entity_id, mesh.name)] = mesh.mesh_program  # Save the old program
+            mesh.mesh_program = programs.FrameSelectProgram(self, mesh.mesh_program.num_instances)
+
+        self.fbo.use()
+        self.scene.draw(
+            projection_matrix=self.camera.projection.matrix,
+            camera_matrix=self.camera.matrix
+        )
+
+        # Swap back to the old programs
+        for mesh in self.scene.meshes:
+            mesh.mesh_program = old_programs[(mesh.entity_id, mesh.name)]
+
+        # Show pillow image for debugging
+        # img = Image.frombytes('RGBA', (self.wnd.width, self.wnd.height), self.fbo.read(components=4))
+        # img = img.transpose(Image.FLIP_TOP_BOTTOM)
+        # img.show()
+
+        return self.fbo.read(components=4, viewport=(x, self.wnd.height-y, 1, 1), dtype='f4')
 
     def render(self, time: float, frametime: float):
         """Renders a frame to on the window

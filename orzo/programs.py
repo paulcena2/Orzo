@@ -66,7 +66,7 @@ class PhongProgram(MeshProgram):
         self.program["ghosting"].value = mesh.ghosting
 
         # Draw bounding box if enabled
-        if self.window.draw_bboxes:
+        if self.window.draw_bboxes and mesh.has_bounding_box:
             mesh.draw_bbox(projection_matrix, model_matrix, camera_matrix, self.bbox_program, bbox())  # Everything pushed to origin for x and y, something up with bbox()?
 
         # Add highlight effect if there is a selection, everything not selected gets a little dull

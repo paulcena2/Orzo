@@ -5,6 +5,7 @@ in vec3 normal;
 in vec4 color;
 in vec2 texcoord;
 in vec3 view_vector;
+in float instance_id;
 
 uniform vec2 id;
 
@@ -12,6 +13,7 @@ out vec4 f_color;
 
 void main() {
 
-    f_color = vec4(id, 1.0, 1.0);
+    int instance = int(instance_id);
+    f_color = vec4(id, instance, 1.0);
 
 }

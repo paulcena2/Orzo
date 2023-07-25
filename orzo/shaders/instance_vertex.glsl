@@ -17,6 +17,7 @@ out vec3 normal;
 out vec3 world_position;
 out vec2 texcoord;
 out vec3 view_vector;
+out float instance_id;
 
 
 vec3 quat_transform(vec4 q, vec3 v){
@@ -41,5 +42,6 @@ void main() {
     world_position = (m_model * local_position).xyz;
     texcoord = in_texture / normalization_factor;
     view_vector = camera_position - world_position;
+    instance_id = float(gl_InstanceID);
 
 }
