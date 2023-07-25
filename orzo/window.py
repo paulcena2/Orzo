@@ -160,6 +160,10 @@ class Window(mglw.WindowConfig):
         self.selection = None  # Current entity that is selected
         self.last_click = None  # (x, y) of last click
         self.rotating = False  # Flag for rotating entity on drag
+        self.arrow_mesh = self.load_scene("arrow.obj").meshes[0]
+        self.arrow_mesh.mesh_program = programs.PhongProgram(self, 3)
+
+        # self.scene.meshes.append(self.arrow_mesh)
 
         # Flag for rendering bounding boxes on mesh, can be toggled in GUI
         self.draw_bboxes = False
@@ -300,6 +304,7 @@ class Window(mglw.WindowConfig):
         # No hit -> No selection
         if int.from_bytes(hit, byteorder='little') == 0:
             self.selection = None
+            self.remove_widgets()
             return
 
         # We hit something! -> Get selection from slot and gen in buffer
@@ -307,6 +312,7 @@ class Window(mglw.WindowConfig):
         entity_id = penne.EntityID(slot=slot, gen=gen)
         logging.info(f"Clicked Entity: {entity_id}")
         self.selection = self.client.get_delegate(entity_id)
+        self.add_widgets()
 
     def mouse_drag_event(self, x: int, y: int, dx: int, dy: int):
         """Change appearance by changing the mesh's transform"""
@@ -426,6 +432,65 @@ class Window(mglw.WindowConfig):
         # img.show()
 
         return self.fbo.read(components=4, viewport=(x, self.wnd.height-y, 1, 1), dtype='f4')
+
+    def add_widgets(self):
+        """Renders x, y, and z handle widgets for moving entities
+
+        Idea: get bounding box and render widgets at the center of each positive face
+              put the node as another child of the same selection node
+        """
+
+        bbox_min, bbox_max = self.selection.node.mesh.bbox_min, self.selection.node.mesh.bbox_max
+        bbox_center = (bbox_min + bbox_max) / 2
+        bbox_size = bbox_max - bbox_min
+
+        widget_mesh = self.arrow_mesh
+        widget_mesh.norm_factor = (2 ** 32) - 1
+        widget_mesh.entity_id = self.selection.id
+        vao = widget_mesh.vao
+
+        # Add default colors
+        default_colors = [1.0, 1.0, 1.0, 1.0] * vao.vertex_count
+        buffer_data = np.array(default_colors, np.int8)
+        vao.buffer(buffer_data, '4u1', 'in_color')
+
+        # Add default textures
+        default_texture_coords = [0.0, 0.0] * vao.vertex_count
+        buffer_data = np.array(default_texture_coords, np.single)
+        vao.buffer(buffer_data, '2f', 'in_texture')
+
+        # Add instances, position, color, rotation quaternion, scale
+        instances = [
+            [
+                [bbox_center[0] + bbox_size[0] / 2, bbox_center[1], bbox_center[2], 1],  # Centered at edge of bbox
+                [1.0, 0.0, 0.0, 0.5],                                                    # Red
+                [0.7071, 0.7071, 0.0, 0],                                                # Rotate 90 degrees around z
+                [.3 * bbox_size[0], .3 * bbox_size[0], .3 * bbox_size[0], 1]             # Scale proportionally
+            ],
+            [
+                [bbox_center[0], bbox_center[1], bbox_center[2] + bbox_size[2] / 2, 1],  # Centered at edge of bbox
+                [0.0, 1.0, 0.0, 0.5],                                                    # Green
+                [0.7071, 0.0, 0.0, -0.7071],                                                 # Rotate 90 degrees around x
+                [.3 * bbox_size[0], .3 * bbox_size[0], .3 * bbox_size[0], 1]             # Scale proportionally
+            ],
+            [
+                [bbox_center[0], bbox_center[1] + bbox_size[1] / 2, bbox_center[2], 1],  # Centered at edge of bbox
+                [0.0, 0.0, 1.0, 0.5],                                                    # Blue
+                [0.0, 0.0, 0.0, 1.0],                                                    # No rotation
+                [.3 * bbox_size[0], .3 * bbox_size[0], .3 * bbox_size[0], 1]             # Scale proportionally
+            ]
+        ]
+        instance_data = np.array(instances, np.float32)
+        vao.buffer(instance_data, '16f/i', 'instance_matrix')
+
+        # Add widgets to scene
+        widget_node = mglw.scene.Node("Widgets", mesh=widget_mesh, matrix=np.identity(4, np.float32))
+        widget_mesh.transform = np.identity(4, np.float32)
+        widget_node.matrix_global = widget_mesh.transform  # Fix later with better transforms in place
+        widget_mesh.ghosting = False
+
+        self.scene.meshes.append(widget_mesh)
+        self.selection.node.add_child(widget_node)
 
     def render(self, time: float, frametime: float):
         """Renders a frame to on the window

@@ -372,27 +372,6 @@ class EntityDelegate(Entity):
         if self.node.mesh:
             scene.meshes.remove(self.node.mesh)
 
-    def request_move(self, dx, dy, dz):
-        """Take 2d drag and get 3d coordinates to move entity"""
-
-        current_mat = self.np_transform if self.np_transform is not None else np.identity(4, np.float32)
-        translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
-        self.np_transform = np.matmul(current_mat, translation_mat)
-        world_transform = self.get_world_transform()
-        x, y, z = world_transform[3, :3]
-
-        self.set_position([x, y, z])
-
-    def request_rotate(self, dx, dy, dz):
-        """Take drag and get quaternion to rotate entity"""
-
-        # Get direction vector - No idea if this is valid
-        x = Quaternion.from_x_rotation(dx)
-        y = Quaternion.from_y_rotation(dy)
-        z = Quaternion.from_z_rotation(dz)
-        new_quat = x.cross(y).cross(z)
-        self.set_rotation(list(new_quat))
-
     def set_up_node(self, window):
 
         # Get local matrix
