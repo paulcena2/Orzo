@@ -61,48 +61,6 @@ def normalize_device_coordinates(x, y, width, height):
     return x, y
 
 
-def distances_point_to_ray(points, ray_origin, ray_direction):
-    """Compute distance from point to a ray in 3d space
-
-    Useful for checking distance from instance to ray when clicking
-    """
-
-    distances = []
-    for point in points:
-        vec_to_point = point[:3] - ray_origin
-        parallel_component = np.dot(vec_to_point, ray_direction)
-        closest_point = ray_origin + parallel_component * ray_direction
-        distances.append(np.linalg.norm(closest_point - point[:3]))
-    return distances
-
-
-def intersection(ray_direction, ray_origin, bbox_min, bbox_max, instance_positions=None):
-    """Ray-BoundingBox intersection test"""
-    t_near = float('-inf')
-    t_far = float('inf')
-
-    for i in range(3):
-        if ray_direction[i] == 0:
-            if ray_origin[i] < bbox_min[i] or ray_origin[i] > bbox_max[i]:
-                return False
-        else:
-            t1 = (bbox_min[i] - ray_origin[i]) / ray_direction[i]
-            t2 = (bbox_max[i] - ray_origin[i]) / ray_direction[i]
-            t_near = max(t_near, min(t1, t2))
-            t_far = min(t_far, max(t1, t2))
-
-    # if there is an intersection, return the distance
-    if t_near <= t_far:
-
-        if instance_positions is not None:
-            dists = distances_point_to_ray(instance_positions, ray_origin, ray_direction)
-            return np.min(dists), t_near
-        else:
-            return 0, t_near
-
-    return False
-
-
 class Window(mglw.WindowConfig):
     """Base Window with built-in 3D camera support
     
@@ -139,7 +97,7 @@ class Window(mglw.WindowConfig):
 
         # Store Light Info
         self.lights = {}  # light_id: light_info
-        # self.default_lighting = False
+        self.default_lighting = True
 
         # Create scene and set up basic nodes
         self.scene = mglw.scene.Scene("Noodles Scene")
@@ -162,11 +120,13 @@ class Window(mglw.WindowConfig):
         self.last_click = None  # (x, y) of last click
         self.rotating = False  # Flag for rotating entity on drag
         self.widgeting = False  # Flag for moving using widgets on drag
-        self.arrow_mesh = self.load_scene("arrow.obj").meshes[0]
-        self.arrow_mesh.mesh_program = programs.PhongProgram(self, 3)
+        self.widget_mode = "Global"  # Whether widgets should be axis aligned or local
+        self.move_widgets = True  # Flags for enabling and disabling widgets
+        self.rotate_widgets = True
+        self.scale_widgets = True
 
-        # Flag for rendering bounding boxes on mesh, can be toggled in GUI
-        self.draw_bboxes = False
+        # Flag for rendering bounding spheres on mesh, can be toggled in GUI
+        self.draw_bs = False
 
         # Set up skybox
         self.skybox_on = True
@@ -400,11 +360,16 @@ class Window(mglw.WindowConfig):
                 if not np.array_equal(preview[:3, :3], old[:3, :3]):
                     quat = Quaternion.from_matrix(preview)
                     self.selected_entity.set_rotation(quat.xyzw.tolist())
+                    self.update_widgets(preview[3, :3] - old[3, :3])
+                    # Problem here! using sphere assumes rotation will be around center of the mesh,
+                    # For instances, rotates around the surface of the sphere so center will not be the same
+                    # Can either find way to adapt the sphere / widgets or change the rotations to center
 
                 # Position
                 if not np.array_equal(preview[3, :3], old[3, :3]):
                     x, y, z = preview[3, :3].astype(float)
                     self.selected_entity.set_position([x, y, z])
+                    self.update_widgets(preview[3, :3] - old[3, :3])
 
             # Server doesn't support these injected methods
             except AttributeError as e:
@@ -443,11 +408,14 @@ class Window(mglw.WindowConfig):
               put the node as another child of the same selection node
         """
 
-        bbox_min, bbox_max = self.selected_entity.node.mesh.bbox_min, self.selected_entity.node.mesh.bbox_max
-        bbox_center = (bbox_min + bbox_max) / 2
-        bbox_size = bbox_max - bbox_min
+        # bbox_min, bbox_max = self.selected_entity.node.mesh.bbox_min, self.selected_entity.node.mesh.bbox_max
+        # bbox_center = (bbox_min + bbox_max) / 2
+        # bbox_size = abs(bbox_max - bbox_min)
 
-        widget_mesh = self.arrow_mesh
+        center, radius = self.selected_entity.node.mesh.bounding_sphere
+
+        widget_mesh = self.load_scene("arrow.obj").meshes[0]
+        widget_mesh.mesh_program = programs.PhongProgram(self, 3)
         widget_mesh.name = "Widget Mesh"
         widget_mesh.norm_factor = (2 ** 32) - 1
         widget_mesh.entity_id = self.selected_entity.id
@@ -466,37 +434,51 @@ class Window(mglw.WindowConfig):
         # Add instances, position, color, rotation quaternion, scale
         instances = [
             [
-                [bbox_center[0] + bbox_size[0] / 2, bbox_center[1], bbox_center[2], 1],  # Centered at edge of bbox
-                [1.0, 0.0, 0.0, 0.5],                                                    # Red
-                [0.7071, 0.7071, 0.0, 0],                                                # Rotate 90 degrees around z
-                [.2 * bbox_size[0], .2 * bbox_size[0], .2 * bbox_size[0], 1]             # Scale proportionally
+                [radius, 0, 0, 1],                              # Centered at edge of bbox
+                [1.0, 0.0, 0.0, 0.5],                           # Red
+                [0.7071, 0.7071, 0.0, 0],                       # Rotate 90 degrees around z
+                [.2 * radius, .2 * radius, .2 * radius, 1]      # Scale proportionally
             ],
             [
-                [bbox_center[0], bbox_center[1] + bbox_size[1] / 2, bbox_center[2], 1],  # Centered at edge of bbox
-                [0.0, 0.0, 1.0, 0.5],  # Blue
-                [0.0, 0.0, 0.0, 1.0],  # No rotation
-                [.2 * bbox_size[0], .2 * bbox_size[0], .2 * bbox_size[0], 1]  # Scale proportionally
+                [0, radius, 0, 1],                              # Centered at edge of bbox
+                [0.0, 0.0, 1.0, 0.5],                           # Blue
+                [0.0, 0.0, 0.0, 1.0],                           # No rotation
+                [.2 * radius, .2 * radius, .2 * radius, 1]      # Scale proportionally
             ],
             [
-                [bbox_center[0], bbox_center[1], bbox_center[2] + bbox_size[2] / 2, 1],  # Centered at edge of bbox
-                [0.0, 1.0, 0.0, 0.5],                                                    # Green
-                [0.7071, 0.0, 0.0, -0.7071],                                             # Rotate 90 degrees around x
-                [.2 * bbox_size[0], .2 * bbox_size[0], .2 * bbox_size[0], 1]             # Scale proportionally
+                [0, 0, radius, 1],                              # Centered at edge of bbox
+                [0.0, 1.0, 0.0, 0.5],                           # Green
+                [0.7071, 0.0, 0.0, -0.7071],                    # Rotate 90 degrees around x
+                [.2 * radius, .2 * radius, .2 * radius, 1]      # Scale proportionally
             ]
         ]
         instance_data = np.array(instances, np.float32)
         vao.buffer(instance_data, '16f/i', 'instance_matrix')
 
         # Add widgets to scene
-        widget_node = mglw.scene.Node("Widgets", mesh=widget_mesh, matrix=np.identity(4, np.float32))
+        mat = np.identity(4, np.float32)
+        mat[3, :3] = center
+        widget_node = mglw.scene.Node("Widgets", mesh=widget_mesh, matrix=mat)
         widget_mesh.transform = np.identity(4, np.float32)
-        widget_node.matrix_global = self.selected_entity.node.matrix_global  # Fix later with better transforms in place
+        widget_node.matrix_global = mat  # Fix later with better transforms in place
         widget_mesh.ghosting = False
-        widget_mesh.has_bounding_box = False
+        widget_mesh.has_bounding_sphere = False
 
         self.scene.meshes.append(widget_mesh)
-        self.selected_entity.node.add_child(widget_node)
+        self.root.add_child(widget_node)  # Keep the widgets in world space
+        # self.selected_entity.node.add_child(widget_node)
         self.scene.nodes.append(widget_node)
+
+    def update_widgets(self, delta):
+
+        # Update bounding sphere in mesh
+        selected_mesh = self.selected_entity.node.mesh
+        old_center, old_radius = selected_mesh.bounding_sphere
+        new_center = old_center + delta
+        selected_mesh.bounding_sphere = (new_center, old_radius)
+
+        # Update the widget transforms
+        self.scene.find_node("Widgets").matrix_global[3, :3] = new_center
 
     def remove_widgets(self):
 
@@ -623,7 +605,7 @@ class Window(mglw.WindowConfig):
             if imgui.begin_menu("Settings", True):
 
                 # Bboxes
-                clicked, self.draw_bboxes = imgui.checkbox("Show Bounding Boxes", self.draw_bboxes)
+                clicked, self.draw_bs = imgui.checkbox("Show Bounding Boxes", self.draw_bs)
 
                 # Skybox
                 clicked, self.skybox_on = imgui.checkbox("Use Skybox", self.skybox_on)
@@ -651,6 +633,16 @@ class Window(mglw.WindowConfig):
                 if changed:
                     self.spec_strength = spec
 
+                # Lighting Settings
+                imgui.menu_item("Lighting Settings", None, False, True)
+                changed, self.default_lighting = imgui.checkbox("Default Lighting", self.default_lighting)
+
+                # Widget Settings
+                imgui.menu_item("Widget Settings", None, False, True)
+                changed, self.move_widgets = imgui.checkbox("Movement Widgets", self.move_widgets)
+                changed, self.rotate_widgets = imgui.checkbox("Rotation Widgets", self.rotate_widgets)
+                changed, self.scale_widgets = imgui.checkbox("Scaling Widgets", self.scale_widgets)
+
                 imgui.end_menu()
             imgui.end_main_menu_bar()
 
@@ -660,7 +652,7 @@ class Window(mglw.WindowConfig):
         imgui.text(f"Press 'Space' to toggle camera/GUI")
         imgui.text(f"Click and drag an entity to move it")
         imgui.text(f"Hold 'r' while dragging to rotate an entity")
-        _, self.draw_bboxes = imgui.checkbox("Show Bounding Boxes", self.draw_bboxes)
+        _, self.draw_bs = imgui.checkbox("Show Bounding Boxes", self.draw_bs)
         imgui.end()
 
         # Render Document Methods and Signals or selection

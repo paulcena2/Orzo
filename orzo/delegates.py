@@ -336,7 +336,10 @@ class EntityDelegate(Entity):
             del window.lights[light_id]
 
     def get_world_transform(self):
-        """Recursive function to get world transform for an entity"""
+        """Recursive function to get world transform for an entity
+
+        TODO simplify and track in node - calc model matrix can use this method as getter
+        """
 
         if self.np_transform is not None:
             local_transform = self.np_transform
@@ -548,8 +551,8 @@ class GeometryDelegate(Geometry):
         return " ".join(formats), norm_factor
 
     @staticmethod
-    def calculate_bounding_box(pos_bytes, instance=False):
-        """Calculate bounding box from bytes
+    def calculate_bounding_sphere(pos_bytes, instance=False):
+        """Calculate axis aligned bounding box from bytes
 
         If we are dealing with instance rendering, assume instances are small and box them all in.
         If dealing with vertices calculate it around the mesh
@@ -558,16 +561,18 @@ class GeometryDelegate(Geometry):
         if instance:
             instances = np.frombuffer(pos_bytes, np.float32)
             instances = instances.reshape(-1, 16)  # Break array into rows of 16 -> each row is an instance
-            positions = instances[:, :3]  # Get first three values stored in each instance -> position
-            min_x, min_y, min_z = np.min(positions, axis=0)
-            max_x, max_y, max_z = np.max(positions, axis=0)
+            points = instances[:, :3]  # Get first three values stored in each instance -> position
         else:
             vertices = np.frombuffer(pos_bytes, np.float32)
-            vertices = vertices.reshape(-1, 3)
-            min_x, min_y, min_z = np.min(vertices, axis=0)
-            max_x, max_y, max_z = np.max(vertices, axis=0)
+            points = vertices.reshape(-1, 3)
 
-        return BoundingBox(min=[min_x, min_y, min_z], max=[max_x, max_y, max_z])
+        # Calculate the center of the bounding sphere
+        center = np.mean(points, axis=0)
+
+        # Calculate the maximum distance from the center to any vertex
+        max_distance = np.max(np.linalg.norm(points - center, axis=1))
+
+        return center, max_distance
 
     def render(self, window, entity):
 
@@ -611,13 +616,6 @@ class GeometryDelegate(Geometry):
         scene = window.scene
         transform = entity.np_transform if entity.np_transform is not None else np.eye(4)
         instances = entity.render_rep.instances
-        if entity.influence:
-            bounding_box = entity.influence
-        elif instances and instances.bb:
-            bounding_box = instances.bb
-            entity.influence = bounding_box
-        else:
-            bounding_box = None
 
         # Initialize VAO to store buffers and indices for this patch
         vao = mglw.opengl.vao.VAO(name=f"{self.name} Patch VAO", mode=MODE_MAP[patch.type])
@@ -663,9 +661,8 @@ class GeometryDelegate(Geometry):
                 buffer_format = "4u1"
 
             # Calculate bounding box if needed for entity without instances
-            if attribute.semantic == "POSITION" and not bounding_box and not instances:
-                bounding_box = self.calculate_bounding_box(attr_bytes)
-                entity.influence = bounding_box
+            if attribute.semantic == "POSITION" and not instances:
+                bounding_sphere = self.calculate_bounding_sphere(attr_bytes)
 
             vao.buffer(attr_bytes, buffer_format, [new_attributes[attribute.semantic]["name"]])
 
@@ -710,10 +707,7 @@ class GeometryDelegate(Geometry):
             mesh.mesh_program = programs.PhongProgram(window, num_instances)
 
             # Set up bounding box for instance rendering
-            if not bounding_box:
-                bounding_box = self.calculate_bounding_box(instance_bytes, instance=True)
-                instances.bb = bounding_box
-                entity.influence = bounding_box
+            bounding_sphere = self.calculate_bounding_sphere(instance_bytes, instance=True)
 
             # Store local instance positions, useful for instance ray checking
             insts = np.frombuffer(instance_bytes, np.single).tolist()
@@ -725,9 +719,9 @@ class GeometryDelegate(Geometry):
             num_instances = 0
             mesh.mesh_program = programs.PhongProgram(window, num_instances=-1)
 
-        # Set bounding box attributes
-        mesh.bbox_min, mesh.bbox_max = np.array(bounding_box.min), np.array(bounding_box.max)
-        mesh.has_bounding_box = True
+        # Set bounding sphere attributes - flag for mesh program
+        mesh.bounding_sphere = bounding_sphere
+        mesh.has_bounding_sphere = True
 
         # Add mesh as new node to scene graph, np.array(transform, order='C')
         mesh_copy = copy.copy(mesh)

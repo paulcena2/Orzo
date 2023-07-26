@@ -66,8 +66,11 @@ class PhongProgram(MeshProgram):
         self.program["ghosting"].value = mesh.ghosting
 
         # Draw bounding box if enabled
-        if self.window.draw_bboxes and mesh.has_bounding_box:
-            mesh.draw_bbox(projection_matrix, model_matrix, camera_matrix, self.bbox_program, bbox())  # Everything pushed to origin for x and y, something up with bbox()?
+        if self.window.draw_bs and mesh.has_bounding_sphere:
+            # mesh.draw_bbox(projection_matrix, model_matrix, camera_matrix, self.bbox_program, bbox())
+            # Get rid of model matrix and rely on recalculating bbox to world space
+            # mesh.draw_bbox(projection_matrix, np.identity(4, dtype='f4'), camera_matrix, self.bbox_program, bbox())
+            pass  # TODO: Transition to bounding spheres
 
         # Add highlight effect if there is a selection, everything not selected gets a little dull
         selection = self.window.selected_entity
