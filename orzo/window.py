@@ -102,6 +102,7 @@ class Window(mglw.WindowConfig):
         # Create scene and set up basic nodes
         self.scene = mglw.scene.Scene("Noodles Scene")
         self.root = mglw.scene.Node("Root")
+        self.root.matrix = np.identity(4, np.float32)
         self.root.matrix_global = np.identity(4, np.float32)
         self.scene.root_nodes.append(self.root)
         self.scene.cameras.append(self.camera)
@@ -133,6 +134,48 @@ class Window(mglw.WindowConfig):
         self.skybox = mglw.geometry.sphere(radius=SKYBOX_RADIUS)
         self.skybox_program = self.load_program(os.path.join(current_dir, "shaders/sky.glsl"))
         self.skybox_texture = self.load_texture_2d("skybox.png", flip_y=False)
+
+    def update_matrices(self):
+        """Update global matrices for all nodes in the scene"""
+        self.root.calc_model_mat(np.identity(4))
+
+    def add_node(self, node, parent=None):
+        """Add a node to the scene
+
+        Adds to root by default, otherwise adds to parent node
+        """
+        self.scene.nodes.append(node)
+
+        # Keep track of mesh
+        if node.mesh is not None:
+            self.scene.meshes.append(node.mesh)
+
+        # Attach to parent node
+        if parent is None:
+            self.root.add_child(node)
+        else:
+            parent.add_child(node)
+
+        # update global matrices
+        self.update_matrices()
+
+    def remove_node(self, node, parent=None):
+        """Remove a node from the scene"""
+        self.scene.nodes.remove(node)
+
+        # Keep track of mesh
+        if node.mesh is not None:
+            self.scene.meshes.remove(node.mesh)
+
+        # Take care of parent connection
+        if parent is None:
+            self.root.children.remove(node)
+        else:
+            parent.children.remove(node)
+
+        # Recurse on children
+        for child in node.children:
+            self.remove_node(child, parent=node)
 
     def get_ray_from_click(self, x, y, world=True):
 
@@ -322,7 +365,6 @@ class Window(mglw.WindowConfig):
                 translation_mat = np.identity(4)
             selected_node.matrix = np.matmul(current_mat, translation_mat)
             selected_node.matrix_global = selected_node.matrix
-            selected_node.mesh.transform = selected_node.matrix
 
         # If r is held, rotate, if not translate
         elif self.rotating:
@@ -331,15 +373,34 @@ class Window(mglw.WindowConfig):
             new_mat[3, :3] = current_mat[3, :3]  # This seems like a hack, but gets rid of the translation component
             selected_node.matrix = new_mat
             selected_node.matrix_global = new_mat
-            selected_node.mesh.transform = new_mat
             # Transorm is in node matrix, matrix global, children -> patch's node transform, mesh transform
             # There is a mesh in the child node for the patch and also a mesh at the entity level -> double version
+
+            center, radius = self.selected_entity.node.mesh.bounding_sphere
+
+            # Translate the pivot point to the center of the bounding sphere
+            # current_pivot = current_mat[3, :3]
+            # pivot_translation = np.identity(4)
+            # pivot_translation[3, :3] = center - current_pivot
+            # new_mat = np.matmul(current_mat, pivot_translation)
+            #
+            # # Perform the rotation around the pivot point
+            # quat = self.get_world_rotation(x, y, x_last, y_last)
+            # rotation_matrix = quat.matrix44
+            # new_mat = np.matmul(new_mat, rotation_matrix)
+            #
+            # # Step 3: Translate the object back to its original position
+            # inverse_pivot_translation = np.identity(4)
+            # inverse_pivot_translation[3, :3] = current_pivot - center
+            # new_mat = np.matmul(new_mat, inverse_pivot_translation)
+            # selected_node.matrix = new_mat
+            # selected_node.matrix_global = new_mat
+
         else:
             dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
             translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
             selected_node.matrix = np.matmul(current_mat, translation_mat)
             selected_node.matrix_global = selected_node.matrix
-            selected_node.mesh.transform = selected_node.matrix
 
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
@@ -360,7 +421,8 @@ class Window(mglw.WindowConfig):
                 if not np.array_equal(preview[:3, :3], old[:3, :3]):
                     quat = Quaternion.from_matrix(preview)
                     self.selected_entity.set_rotation(quat.xyzw.tolist())
-                    self.update_widgets(preview[3, :3] - old[3, :3])
+                    new_pos, old_pos = preview[:3, :3], old[:3, :3]
+                    self.update_widgets(np.array(new_pos) - np.array(old_pos))
                     # Problem here! using sphere assumes rotation will be around center of the mesh,
                     # For instances, rotates around the surface of the sphere so center will not be the same
                     # Can either find way to adapt the sphere / widgets or change the rotations to center
@@ -376,7 +438,6 @@ class Window(mglw.WindowConfig):
                 logging.warning(f"Dragging {self.selected_entity} failed: {e}")
                 self.selected_entity.node.matrix = old
                 self.selected_entity.node.matrix_global = old
-                self.selected_entity.node.mesh.transform = old
 
             # Turn off ghosting effect
             self.selected_entity.node.mesh.ghosting = False
@@ -459,15 +520,11 @@ class Window(mglw.WindowConfig):
         mat = np.identity(4, np.float32)
         mat[3, :3] = center
         widget_node = mglw.scene.Node("Widgets", mesh=widget_mesh, matrix=mat)
-        widget_mesh.transform = np.identity(4, np.float32)
         widget_node.matrix_global = mat  # Fix later with better transforms in place
         widget_mesh.ghosting = False
         widget_mesh.has_bounding_sphere = False
 
-        self.scene.meshes.append(widget_mesh)
-        self.root.add_child(widget_node)  # Keep the widgets in world space
-        # self.selected_entity.node.add_child(widget_node)
-        self.scene.nodes.append(widget_node)
+        self.add_node(widget_node)
 
     def update_widgets(self, delta):
 
@@ -484,10 +541,7 @@ class Window(mglw.WindowConfig):
 
         # Remove widgets from scene
         widget_node = self.scene.find_node("Widgets")
-        self.scene.meshes.remove(widget_node.mesh)
-        entity = self.client.get_delegate(widget_node.mesh.entity_id)
-        entity.node.children.remove(widget_node)
-        self.scene.nodes.remove(widget_node)
+        self.remove_node(widget_node)
 
     def render_scene_to_framebuffer(self, x, y):
 

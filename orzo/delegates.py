@@ -19,7 +19,6 @@ import moderngl
 import numpy as np
 from PIL import Image as img
 import imgui
-from pyrr import Quaternion
 
 from . import programs
 
@@ -290,9 +289,11 @@ class EntityDelegate(Entity):
         # Add geometry patch nodes as children to main
         for node in self.patch_nodes:
             node.matrix = np.identity(4, np.float64)
-            node.matrix_global = self.get_world_transform()
-            self.node.add_child(node)
-            window.scene.nodes.append(node)
+            window.add_node(node, parent=self.node)
+
+    def remove_from_render(self, window):
+        """Remove mesh from render"""
+        window.remove_node(self.node)
 
     def attach_lights(self, window):
         """Callback to handle lights attached to an entity"""
@@ -307,7 +308,6 @@ class EntityDelegate(Entity):
             # Add positional and directional info to the light
             light_info = light_delegate.light_basics
             world_transform = self.get_world_transform()
-            wtt = world_transform.transpose()
             pos = np.matmul(np.array([0.0, 0.0, 0.0, 1.0]), world_transform)
             direction = np.matmul(np.array([0.0, 0.0, -1.0, 1.0]), world_transform)
             light_info["world_position"] = (pos[0] / pos[3], pos[1] / pos[3], pos[2] / pos[3])
@@ -336,68 +336,30 @@ class EntityDelegate(Entity):
             del window.lights[light_id]
 
     def get_world_transform(self):
-        """Recursive function to get world transform for an entity
-
-        TODO simplify and track in node - calc model matrix can use this method as getter
-        """
-
-        if self.np_transform is not None:
-            local_transform = self.np_transform
-        else:
-            local_transform = np.identity(4, np.float32)
-
-        if self.parent:
-            parent = self.client.get_delegate(self.parent)
-            return np.matmul(local_transform, parent.get_world_transform())
-        else:
-            return local_transform
-
-    def update_node_transform(self, node: mglw.scene.Node):
-        """Recursive function to update nodes"""
-
-        for child in node.children:
-            child.matrix_global = np.matmul(child.matrix, node.matrix_global)
-            self.update_node_transform(child)
-
-    def remove_from_render(self, window):
-        """Remove mesh from render"""
-
-        # Need to test, enough to remove from render?
-        scene = window.scene
-        if self.parent:
-            parent = self.client.get_delegate(self.parent)
-            parent.node.children.remove(self.node)
-        else:
-            window.root.children.remove(self.node)  # Caused error! maybe node isn't set back up correctly on update
-
-        # Update state in scene
-        scene.nodes.remove(self.node)
-        if self.node.mesh:
-            scene.meshes.remove(self.node.mesh)
+        """Get the current world transform for the entity"""
+        return self.node.matrix_global
 
     def set_up_node(self, window):
 
-        # Get local matrix
+        # Create node with local transform
         if self.np_transform is not None:
-            matrix = self.np_transform
+            self.node = mglw.scene.Node(f"{self.id}'s Node", matrix=self.np_transform)
         else:
-            matrix = np.identity(4, np.float32)
-
-        self.node = mglw.scene.Node(f"{self.id}'s Node", matrix=matrix)
-        self.node.matrix_global = self.get_world_transform()
+            self.node = mglw.scene.Node(f"{self.id}'s Node", matrix=np.identity(4))
 
         # Update Scene / State
         if self.parent:
-            parent = self.client.get_delegate(self.parent)
-            parent.node.add_child(self.node)
+            window.add_node(self.node, parent=self.client.get_delegate(self.parent).node)
         else:
-            window.root.add_child(self.node)
+            window.add_node(self.node, parent=None)
 
-        window.scene.nodes.append(self.node)
+    def update_matrices(self, window):
+        """Update global matrices for all nodes in scene"""
+        window.update_matrices()
 
     def on_new(self, message: dict):
 
-        # Reformat transform and keep seperate
+        # Reformat transform and keep separate
         if self.transform:
             # This keeps in col major order for MGLW
             self.np_transform = np.array(self.transform, np.float32).reshape(4, 4)
@@ -424,18 +386,18 @@ class EntityDelegate(Entity):
         if "transform" in message or "parent" in message:
             self.np_transform = np.array(self.transform, np.float32).reshape(4, 4)
             self.node.matrix = self.np_transform
-            self.node.matrix_global = self.get_world_transform()
-            self.update_node_transform(self.node)
+            self.client.callback_queue.put((self.update_matrices, []))
 
-            # Need to be able to update light positions
+            # Update light positions
+            if self.lights:
+                self.client.callback_queue.put((self.update_lights, []))
 
-        # FIX RENDER REP IN ANY CHILD - figure out way to keep track of children and best way to recurse changes
-        # What changes would get passed down? just transform?
-        # probably need to pass that into the mesh in the node's transform
-        if "render_rep" in message or "parent" in message:
+        # New mesh on entity
+        if "render_rep" in message:
             self.client.callback_queue.put((self.remove_from_render, []))
             self.client.callback_queue.put((self.render_entity, []))
 
+        # Update lights attached and light positions
         if "lights" in message:
             self.client.callback_queue.put((self.update_lights, []))
 
@@ -692,9 +654,8 @@ class GeometryDelegate(Geometry):
         mesh.norm_factor = norm_factor  # For texture coords
         mesh.geometry_id = self.id
         mesh.entity_id = entity.id  # Can get delegate from mesh in click detection
-        mesh.transform = transform  # Keep track of local transform, mostly for translating bbox in mesh.draw rn
         mesh.ghosting = False  # Ghosting turned off then will be turned on when dragged
-        entity.node.mesh = mesh  # Add mesh to entity's node, used to delete from scene graph later
+        entity.node.mesh = mesh  # Add mesh to entity's node, used as preview and to delete from scene graph later
 
         # Add instances to vao if applicable, also add appropriate mesh program
         if instances:
@@ -726,7 +687,6 @@ class GeometryDelegate(Geometry):
         # Add mesh as new node to scene graph, np.array(transform, order='C')
         mesh_copy = copy.copy(mesh)
         scene.meshes.append(mesh)
-        scene.meshes.append(mesh_copy)
         new_mesh_node = mglw.scene.Node(f"{self.name}'s patch node", mesh=mesh_copy, matrix=transform)
 
         return new_mesh_node, num_instances
