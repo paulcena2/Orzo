@@ -278,9 +278,6 @@ class EntityDelegate(Entity):
         Will be called as callback from window
         """
 
-        # Set up the node for the entity / mesh
-        self.set_up_node(window)
-
         # Prepare Mesh
         geometry = self.client.get_delegate(self.render_rep.mesh)
         self.geometry_delegate = geometry
@@ -358,6 +355,9 @@ class EntityDelegate(Entity):
         window.update_matrices()
 
     def on_new(self, message: dict):
+
+        # Create node - even lights are represented with a node
+        self.client.callback_queue.put((self.set_up_node, []))
 
         # Reformat transform and keep separate
         if self.transform:
@@ -513,7 +513,7 @@ class GeometryDelegate(Geometry):
         return " ".join(formats), norm_factor
 
     @staticmethod
-    def calculate_bounding_sphere(pos_bytes, instance=False):
+    def calculate_bounding_sphere(pos_bytes, entity, instance=False):
         """Calculate axis aligned bounding box from bytes
 
         If we are dealing with instance rendering, assume instances are small and box them all in.
@@ -534,7 +534,11 @@ class GeometryDelegate(Geometry):
         # Calculate the maximum distance from the center to any vertex
         max_distance = np.max(np.linalg.norm(points - center, axis=1))
 
-        return center, max_distance
+        # Translate center to world space
+        world_transform = entity.get_world_transform()
+        center = np.matmul(np.array([*center, 1.0]), world_transform)
+
+        return center[:3], max_distance
 
     def render(self, window, entity):
 
@@ -624,7 +628,7 @@ class GeometryDelegate(Geometry):
 
             # Calculate bounding box if needed for entity without instances
             if attribute.semantic == "POSITION" and not instances:
-                bounding_sphere = self.calculate_bounding_sphere(attr_bytes)
+                bounding_sphere = self.calculate_bounding_sphere(attr_bytes, entity)
 
             vao.buffer(attr_bytes, buffer_format, [new_attributes[attribute.semantic]["name"]])
 
@@ -668,7 +672,7 @@ class GeometryDelegate(Geometry):
             mesh.mesh_program = programs.PhongProgram(window, num_instances)
 
             # Set up bounding box for instance rendering
-            bounding_sphere = self.calculate_bounding_sphere(instance_bytes, instance=True)
+            bounding_sphere = self.calculate_bounding_sphere(instance_bytes, entity, instance=True)
 
             # Store local instance positions, useful for instance ray checking
             insts = np.frombuffer(instance_bytes, np.single).tolist()

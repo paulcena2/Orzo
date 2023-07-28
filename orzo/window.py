@@ -233,14 +233,24 @@ class Window(mglw.WindowConfig):
 
         # Get axis of rotation with cross product
         axis = np.cross(click_vec, release_vec)
-        # axis = np.cross(release_vec, click_vec)
-
-        # Get angle of rotation with dot product
-        # angle = np.arccos(np.dot(release_vec, click_vec))
+        # # axis = np.cross(release_vec, click_vec)
+        #
+        # # Get angle of rotation with dot product
+        # # angle = np.arccos(np.dot(release_vec, click_vec))
         angle = .05
 
         # Create quaternion
         return Quaternion.from_axis_rotation(axis, angle)
+
+        axis = axis / np.sqrt(np.dot(axis, axis))
+        a = np.cos(angle / 2.0)
+        b, c, d = -axis * np.sin(angle / 2.0)
+        aa, bb, cc, dd = a * a, b * b, c * c, d * d
+        bc, ad, ac, ab, bd, cd = b * c, a * d, a * c, a * b, b * d, c * d
+        return np.array([[aa + bb - cc - dd, 2 * (bc + ad), 2 * (bd - ac), 0],
+                        [2 * (bc - ad), aa + cc - bb - dd, 2 * (cd + ab), 0],
+                        [2 * (bd + ac), 2 * (cd - ab), aa + dd - bb - cc, 0],
+                        [0, 0, 0, 1]], dtype=np.float32)
 
     def key_event(self, key, action, modifiers):
 
@@ -312,8 +322,9 @@ class Window(mglw.WindowConfig):
         if hit == 0:
             self.selected_entity = None
             self.selected_instance = None
-            self.widgeting = False
-            self.remove_widgets()
+            if self.widgeting:
+                self.widgeting = False
+                self.remove_widgets()
             return
 
         if hit == 2:
@@ -347,7 +358,8 @@ class Window(mglw.WindowConfig):
 
         x_last, y_last = x - dx, y - dy
         selected_node = self.selected_entity.node
-        current_mat = selected_node.matrix
+        current_mat_local = selected_node.matrix
+        current_mat_global = selected_node.matrix_global
 
         # Turn on ghosting effect
         selected_node.mesh.ghosting = True
@@ -363,44 +375,45 @@ class Window(mglw.WindowConfig):
                 translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, dz, 1]])
             else:
                 translation_mat = np.identity(4)
-            selected_node.matrix = np.matmul(current_mat, translation_mat)
-            selected_node.matrix_global = selected_node.matrix
+            selected_node.matrix_global = np.matmul(current_mat_global, translation_mat)
 
         # If r is held, rotate, if not translate
         elif self.rotating:
-            quat = self.get_world_rotation(x, y, x_last, y_last)
-            new_mat = np.matmul(current_mat, quat.matrix44)
-            new_mat[3, :3] = current_mat[3, :3]  # This seems like a hack, but gets rid of the translation component
-            selected_node.matrix = new_mat
-            selected_node.matrix_global = new_mat
-            # Transorm is in node matrix, matrix global, children -> patch's node transform, mesh transform
-            # There is a mesh in the child node for the patch and also a mesh at the entity level -> double version
+            # quat = self.get_world_rotation(x, y, x_last, y_last)
+            # new_mat = np.matmul(current_mat_global, quat.matrix44)
+            # new_mat[3, :3] = current_mat_global[3, :3]  # This seems like a hack, but gets rid of the translation component
+            # selected_node.matrix = new_mat
+            # selected_node.matrix_global = new_mat
+            # # Transorm is in node matrix, matrix global, children -> patch's node transform, mesh transform
+            # # There is a mesh in the child node for the patch and also a mesh at the entity level -> double version
 
             center, radius = self.selected_entity.node.mesh.bounding_sphere
 
             # Translate the pivot point to the center of the bounding sphere
-            # current_pivot = current_mat[3, :3]
-            # pivot_translation = np.identity(4)
-            # pivot_translation[3, :3] = center - current_pivot
-            # new_mat = np.matmul(current_mat, pivot_translation)
-            #
-            # # Perform the rotation around the pivot point
-            # quat = self.get_world_rotation(x, y, x_last, y_last)
-            # rotation_matrix = quat.matrix44
-            # new_mat = np.matmul(new_mat, rotation_matrix)
-            #
-            # # Step 3: Translate the object back to its original position
-            # inverse_pivot_translation = np.identity(4)
-            # inverse_pivot_translation[3, :3] = current_pivot - center
-            # new_mat = np.matmul(new_mat, inverse_pivot_translation)
-            # selected_node.matrix = new_mat
-            # selected_node.matrix_global = new_mat
+            current_pivot = current_mat_local[3, :3]
+            current_position = current_mat_global[3, :3]
+            pivot_translation = np.identity(4)
+            pivot_translation[3, :3] = -center
+            new_mat = np.matmul(current_mat_global, pivot_translation)
+
+            # Perform the rotation around the pivot point
+            quat = self.get_world_rotation(x, y, x_last, y_last)
+            rotation_matrix = np.array(quat.matrix44)
+            # rotation_matrix = self.get_world_rotation(x, y, x_last, y_last)
+            new_mat = np.matmul(new_mat, rotation_matrix)
+
+            # Translate the object back to its original position
+            inverse_pivot_translation = np.identity(4)
+            inverse_pivot_translation[3, :3] = center
+            new_mat = np.matmul(new_mat, inverse_pivot_translation)
+            selected_node.matrix_global = new_mat
+            # transformation = np.matmul(np.matmul(inverse_pivot_translation, rotation_matrix), pivot_translation)
+            # selected_node.matrix_global = np.matmul(current_mat_global, transformation)
 
         else:
             dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
             translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
-            selected_node.matrix = np.matmul(current_mat, translation_mat)
-            selected_node.matrix_global = selected_node.matrix
+            selected_node.matrix_global = np.matmul(current_mat_global, translation_mat)
 
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
@@ -421,22 +434,17 @@ class Window(mglw.WindowConfig):
                 if not np.array_equal(preview[:3, :3], old[:3, :3]):
                     quat = Quaternion.from_matrix(preview)
                     self.selected_entity.set_rotation(quat.xyzw.tolist())
-                    new_pos, old_pos = preview[:3, :3], old[:3, :3]
-                    self.update_widgets(np.array(new_pos) - np.array(old_pos))
-                    # Problem here! using sphere assumes rotation will be around center of the mesh,
-                    # For instances, rotates around the surface of the sphere so center will not be the same
-                    # Can either find way to adapt the sphere / widgets or change the rotations to center
 
                 # Position
                 if not np.array_equal(preview[3, :3], old[3, :3]):
                     x, y, z = preview[3, :3].astype(float)
                     self.selected_entity.set_position([x, y, z])
-                    self.update_widgets(preview[3, :3] - old[3, :3])
+                    self.update_widgets(old, preview)
 
             # Server doesn't support these injected methods
             except AttributeError as e:
                 logging.warning(f"Dragging {self.selected_entity} failed: {e}")
-                self.selected_entity.node.matrix = old
+                self.selected_entity.node.matrix = self.selected_entity.node.children[0].matrix
                 self.selected_entity.node.matrix_global = old
 
             # Turn off ghosting effect
@@ -469,10 +477,6 @@ class Window(mglw.WindowConfig):
               put the node as another child of the same selection node
         """
 
-        # bbox_min, bbox_max = self.selected_entity.node.mesh.bbox_min, self.selected_entity.node.mesh.bbox_max
-        # bbox_center = (bbox_min + bbox_max) / 2
-        # bbox_size = abs(bbox_max - bbox_min)
-
         center, radius = self.selected_entity.node.mesh.bounding_sphere
 
         widget_mesh = self.load_scene("arrow.obj").meshes[0]
@@ -498,44 +502,53 @@ class Window(mglw.WindowConfig):
                 [radius, 0, 0, 1],                              # Centered at edge of bbox
                 [1.0, 0.0, 0.0, 0.5],                           # Red
                 [0.7071, 0.7071, 0.0, 0],                       # Rotate 90 degrees around z
-                [.2 * radius, .2 * radius, .2 * radius, 1]      # Scale proportionally
+                [.1 * radius, .1 * radius, .1 * radius, 1]      # Scale proportionally
             ],
             [
                 [0, radius, 0, 1],                              # Centered at edge of bbox
                 [0.0, 0.0, 1.0, 0.5],                           # Blue
                 [0.0, 0.0, 0.0, 1.0],                           # No rotation
-                [.2 * radius, .2 * radius, .2 * radius, 1]      # Scale proportionally
+                [.1 * radius, .1 * radius, .1 * radius, 1]      # Scale proportionally
             ],
             [
                 [0, 0, radius, 1],                              # Centered at edge of bbox
                 [0.0, 1.0, 0.0, 0.5],                           # Green
                 [0.7071, 0.0, 0.0, -0.7071],                    # Rotate 90 degrees around x
-                [.2 * radius, .2 * radius, .2 * radius, 1]      # Scale proportionally
+                [.1 * radius, .1 * radius, .1 * radius, 1]      # Scale proportionally
             ]
         ]
         instance_data = np.array(instances, np.float32)
         vao.buffer(instance_data, '16f/i', 'instance_matrix')
 
-        # Add widgets to scene
+        # Add widgets to scene, matrix moves to center of bounding sphere
         mat = np.identity(4, np.float32)
         mat[3, :3] = center
         widget_node = mglw.scene.Node("Widgets", mesh=widget_mesh, matrix=mat)
-        widget_node.matrix_global = mat  # Fix later with better transforms in place
         widget_mesh.ghosting = False
         widget_mesh.has_bounding_sphere = False
 
         self.add_node(widget_node)
 
-    def update_widgets(self, delta):
+    def update_widgets(self, old_global, new_global):
 
         # Update bounding sphere in mesh
         selected_mesh = self.selected_entity.node.mesh
         old_center, old_radius = selected_mesh.bounding_sphere
-        new_center = old_center + delta
+
+        # Homogenize
+        old_center = np.array([old_center[0], old_center[1], old_center[2], 1])
+
+        # Transform center back to local space
+        old_center_local = np.matmul(old_center, np.linalg.inv(old_global))
+
+        # Transform back to world space with new transform
+        new_center = np.matmul(old_center_local, new_global)
+        new_center = new_center[:3]
         selected_mesh.bounding_sphere = (new_center, old_radius)
 
         # Update the widget transforms
-        self.scene.find_node("Widgets").matrix_global[3, :3] = new_center
+        self.scene.find_node("Widgets").matrix[3, :3] = new_center
+        self.update_matrices()
 
     def remove_widgets(self):
 
