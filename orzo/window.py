@@ -120,8 +120,8 @@ class Window(mglw.WindowConfig):
         self.selected_instance = None  # Number instance that is selected
         self.last_click = None  # (x, y) of last click
         self.rotating = False  # Flag for rotating entity on drag
-        self.widgeting = False  # Flag for moving using widgets on drag
-        self.widget_mode = "Global"  # Whether widgets should be axis aligned or local
+        self.active_widget = None  # String for active widget type
+        self.widgets_align_local = 0  # Whether widgets should be axis aligned or local
         self.move_widgets = True  # Flags for enabling and disabling widgets
         self.rotate_widgets = True
         self.scale_widgets = True
@@ -233,15 +233,12 @@ class Window(mglw.WindowConfig):
 
         # Get axis of rotation with cross product
         axis = np.cross(click_vec, release_vec)
-        # # axis = np.cross(release_vec, click_vec)
-        #
-        # # Get angle of rotation with dot product
-        # # angle = np.arccos(np.dot(release_vec, click_vec))
+
+        # Get angle of rotation with dot product
+        # angle = np.arccos(np.dot(release_vec, click_vec))
         angle = .05
 
-        # Create quaternion
-        return Quaternion.from_axis_rotation(axis, angle)
-
+        # Create rotation matrix
         axis = axis / np.sqrt(np.dot(axis, axis))
         a = np.cos(angle / 2.0)
         b, c, d = -axis * np.sin(angle / 2.0)
@@ -320,18 +317,22 @@ class Window(mglw.WindowConfig):
 
         # No hit -> No selection
         if hit == 0:
+            if self.selected_entity is not None:
+                self.active_widget = None
+                self.remove_widgets()
             self.selected_entity = None
             self.selected_instance = None
-            if self.widgeting:
-                self.widgeting = False
-                self.remove_widgets()
             return
 
+        # Get widget type from hit
         if hit == 2:
-            self.widgeting = True
-            print("Widgeting")
+            self.active_widget = "translation"
+        elif hit == 3:
+            self.active_widget = "rotation"
+        elif hit == 4:
+            self.active_widget = "scaling"
         else:
-            self.widgeting = False
+            self.active_widget = None
 
         # We hit something! -> Get selection from slot and gen in buffer
         entity_id = penne.EntityID(slot=slot, gen=gen)
@@ -365,47 +366,27 @@ class Window(mglw.WindowConfig):
         selected_node.mesh.ghosting = True
 
         # If widgeting, move using the widget's rules
-        if self.widgeting:
+        if self.active_widget is not None:
             dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
-            if self.selected_instance == 0:  # x axis
-                translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, 0, 0, 1]])
-            elif self.selected_instance == 1:  # y axis
-                translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, dy, 0, 1]])
-            elif self.selected_instance == 2:  # z axis
-                translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, dz, 1]])
-            else:
-                translation_mat = np.identity(4)
-            selected_node.matrix_global = np.matmul(current_mat_global, translation_mat)
+            self.handle_widget_movement(dx, dy, dz)
 
         # If r is held, rotate, if not translate
         elif self.rotating:
-            # quat = self.get_world_rotation(x, y, x_last, y_last)
-            # new_mat = np.matmul(current_mat_global, quat.matrix44)
-            # new_mat[3, :3] = current_mat_global[3, :3]  # This seems like a hack, but gets rid of the translation component
-            # selected_node.matrix = new_mat
-            # selected_node.matrix_global = new_mat
-            # # Transorm is in node matrix, matrix global, children -> patch's node transform, mesh transform
-            # # There is a mesh in the child node for the patch and also a mesh at the entity level -> double version
-
             center, radius = self.selected_entity.node.mesh.bounding_sphere
 
             # Translate the pivot point to the center of the bounding sphere
-            current_pivot = current_mat_local[3, :3]
-            current_position = current_mat_global[3, :3]
-            pivot_translation = np.identity(4)
-            pivot_translation[3, :3] = -center
-            new_mat = np.matmul(current_mat_global, pivot_translation)
+            center_translation = np.identity(4)
+            center_translation[3, :3] = -center
+            new_mat = np.matmul(current_mat_global, center_translation)
 
             # Perform the rotation around the pivot point
-            quat = self.get_world_rotation(x, y, x_last, y_last)
-            rotation_matrix = np.array(quat.matrix44)
-            # rotation_matrix = self.get_world_rotation(x, y, x_last, y_last)
+            rotation_matrix = self.get_world_rotation(x, y, x_last, y_last)
             new_mat = np.matmul(new_mat, rotation_matrix)
 
             # Translate the object back to its original position
-            inverse_pivot_translation = np.identity(4)
-            inverse_pivot_translation[3, :3] = center
-            new_mat = np.matmul(new_mat, inverse_pivot_translation)
+            inverse_center_translation = np.identity(4)
+            inverse_center_translation[3, :3] = center
+            new_mat = np.matmul(new_mat, inverse_center_translation)
             selected_node.matrix_global = new_mat
             # transformation = np.matmul(np.matmul(inverse_pivot_translation, rotation_matrix), pivot_translation)
             # selected_node.matrix_global = np.matmul(current_mat_global, transformation)
@@ -481,7 +462,7 @@ class Window(mglw.WindowConfig):
 
         widget_mesh = self.load_scene("arrow.obj").meshes[0]
         widget_mesh.mesh_program = programs.PhongProgram(self, 3)
-        widget_mesh.name = "Widget Mesh"
+        widget_mesh.name = "noo::widget_translation"
         widget_mesh.norm_factor = (2 ** 32) - 1
         widget_mesh.entity_id = self.selected_entity.id
         vao = widget_mesh.vao
@@ -521,7 +502,10 @@ class Window(mglw.WindowConfig):
         vao.buffer(instance_data, '16f/i', 'instance_matrix')
 
         # Add widgets to scene, matrix moves to center of bounding sphere
-        mat = np.identity(4, np.float32)
+        if self.widgets_align_local:
+            mat = self.selected_entity.node.matrix_global
+        else:
+            mat = np.identity(4, np.float32)
         mat[3, :3] = center
         widget_node = mglw.scene.Node("Widgets", mesh=widget_mesh, matrix=mat)
         widget_mesh.ghosting = False
@@ -530,6 +514,12 @@ class Window(mglw.WindowConfig):
         self.add_node(widget_node)
 
     def update_widgets(self, old_global, new_global):
+        """Update widgets when the entity is moved
+
+        Depending on the widget mode, the widgets will be moved in different ways
+        In global mode, the widgets will always remain axis aligned, but in local mode
+        the widgets will rotate with the entity.
+        """
 
         # Update bounding sphere in mesh
         selected_mesh = self.selected_entity.node.mesh
@@ -547,7 +537,13 @@ class Window(mglw.WindowConfig):
         selected_mesh.bounding_sphere = (new_center, old_radius)
 
         # Update the widget transforms
-        self.scene.find_node("Widgets").matrix[3, :3] = new_center
+        if self.widgets_align_local:
+            new_global[3, :3] = new_center
+            self.scene.find_node("Widgets").matrix = new_global
+        else:
+            new_mat = np.identity(4)
+            new_mat[3, :3] = new_center
+            self.scene.find_node("Widgets").matrix = new_mat
         self.update_matrices()
 
     def remove_widgets(self):
@@ -555,6 +551,50 @@ class Window(mglw.WindowConfig):
         # Remove widgets from scene
         widget_node = self.scene.find_node("Widgets")
         self.remove_node(widget_node)
+
+    def handle_widget_movement(self, dx, dy, dz):
+
+        # Essentially a switch to guide drag to the proper handling
+        widget_type = self.active_widget
+        if widget_type == "translation":
+            self.handle_widget_translation(dx, dy, dz)
+        elif widget_type == "rotation":
+            self.handle_widget_rotation(dx, dy, dz)
+        elif widget_type == "scaling":
+            self.handle_widget_scaling(dx, dy, dz)
+        else:
+            return
+
+    def handle_widget_translation(self, dx, dy, dz):
+
+        selected_node = self.selected_entity.node
+        current_mat_global = selected_node.matrix_global
+        direction = self.selected_instance
+
+        if direction == 0:  # x axis
+            translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, 0, 0, 1]])
+        elif direction == 1:  # y axis
+            translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, dy, 0, 1]])
+        elif direction == 2:  # z axis
+            translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, dz, 1]])
+        else:
+            translation_mat = np.identity(4)
+
+        # Add the translation to the current matrix
+        if self.widgets_align_local:
+            translation_mat = np.matmul(translation_mat, current_mat_global)
+
+            # Apply the local translation to the current matrix
+            selected_node.matrix_global[3, :3] = translation_mat[3, :3]
+
+        else:
+            selected_node.matrix_global = np.matmul(current_mat_global, translation_mat)
+
+    def handle_widget_rotation(self, dx, dy, dz):
+        pass
+
+    def handle_widget_scaling(self, dx, dy, dz):
+        pass
 
     def render_scene_to_framebuffer(self, x, y):
 
@@ -709,6 +749,13 @@ class Window(mglw.WindowConfig):
                 changed, self.move_widgets = imgui.checkbox("Movement Widgets", self.move_widgets)
                 changed, self.rotate_widgets = imgui.checkbox("Rotation Widgets", self.rotate_widgets)
                 changed, self.scale_widgets = imgui.checkbox("Scaling Widgets", self.scale_widgets)
+                clicked, self.widgets_align_local = imgui.combo(
+                    "Widget Alignment", self.widgets_align_local, ["Global", "Local"]
+                )
+                if clicked and self.selected_entity:
+                    preview = self.selected_entity.node.matrix_global
+                    old = self.selected_entity.node.children[0].matrix_global
+                    self.update_widgets(old, preview)
 
                 imgui.end_menu()
             imgui.end_main_menu_bar()

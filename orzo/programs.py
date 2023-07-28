@@ -196,7 +196,7 @@ class FrameSelectProgram(MeshProgram):
         self.program["id"].value = tuple(mesh.entity_id)
 
         # Set flag for widget or actual entity
-        if mesh.name == "Widget Mesh":
+        if "noo::widget" in mesh.name:
             self.program["hit_value"].value = 2
         else:
             self.program["hit_value"].value = 1

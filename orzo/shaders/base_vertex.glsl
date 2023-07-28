@@ -16,6 +16,7 @@ out vec3 normal;
 out vec3 world_position;
 out vec2 texcoord;
 out vec3 view_vector;
+out float instance_id;
 
 void main() {
     
@@ -30,4 +31,6 @@ void main() {
 
     //Normalize coordinates -> (0, 1)
     texcoord = in_texture / normalization_factor;
+
+    instance_id = 0.0;
 }
