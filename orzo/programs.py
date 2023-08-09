@@ -196,8 +196,12 @@ class FrameSelectProgram(MeshProgram):
         self.program["id"].value = tuple(mesh.entity_id)
 
         # Set flag for widget or actual entity
-        if "noo::widget" in mesh.name:
+        if mesh.name == "noo::widget_cone":
             self.program["hit_value"].value = 2
+        elif mesh.name == "noo::widget_torus":
+            self.program["hit_value"].value = 3
+        elif mesh.name == "noo::widget_tab":
+            self.program["hit_value"].value = 4
         else:
             self.program["hit_value"].value = 1
 
@@ -208,11 +212,11 @@ class FrameSelectProgram(MeshProgram):
             FrameSelectProgram.camera_position = tuple(camera_world.m4[:3])
         self.program["camera_position"].value = FrameSelectProgram.camera_position
 
-        # Hack to change culling for double_sided material
-        if mesh.material.double_sided:
+        # # Hack to change culling for double_sided material
+        if hasattr(mesh.material, "double_sided") and mesh.material.double_sided:
             mesh.vao.ctx.disable(moderngl.CULL_FACE)
         else:
-            mesh.vao.ctx.enable(moderngl.CULL_FACE)
+            self.ctx.enable(moderngl.CULL_FACE | moderngl.DEPTH_TEST)
 
         num_instances = 1 if self.num_instances == -1 else self.num_instances
         mesh.vao.render(self.program, instances=num_instances)

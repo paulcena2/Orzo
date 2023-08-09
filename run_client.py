@@ -4,10 +4,10 @@ import logging
 import orzo
 
 
-logging.basicConfig(
-    format="%(message)s",
-    level=logging.DEBUG
-)
+# logging.basicConfig(
+#     format="%(message)s",
+#     level=logging.DEBUG
+# )
 
 
 def main():

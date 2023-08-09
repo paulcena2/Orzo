@@ -17,6 +17,7 @@ from penne import *
 import moderngl_window as mglw
 import moderngl
 import numpy as np
+import quaternion
 from PIL import Image as img
 import imgui
 
@@ -270,7 +271,12 @@ class EntityDelegate(Entity):
     table_delegate: Optional[TableDelegate] = None
     num_instances: Optional[int] = 0
     instance_positions: Optional[np.ndarray] = None
-    np_transform: Optional[np.ndarray] = None
+    np_transform: Optional[np.ndarray] = np.eye(4)
+
+    # These correspond to current state -> preview
+    position: Optional[np.ndarray] = np.array([0.0, 0.0, 0.0])
+    rotation: Optional[np.ndarray] = np.array([0.0, 0.0, 0.0, 1.0])
+    scale: Optional[np.ndarray] = np.array([1.0, 1.0, 1.0])
 
     def render_entity(self, window):
         """Render the mesh associated with this delegate
@@ -332,6 +338,14 @@ class EntityDelegate(Entity):
         for light_id in self.lights:
             del window.lights[light_id]
 
+    def compose_transform(self):
+        """Get a transform matrix given the current scale, rotation, and position"""
+        transform = np.eye(4)
+        transform[3, :3] = self.position
+        transform[:3, :3] = quaternion.as_rotation_matrix(np.quaternion(self.rotation))
+        transform[:3, :3] = np.matmul(np.diag(self.scale), transform[:3, :3])
+        return transform
+
     def get_world_transform(self):
         """Get the current world transform for the entity"""
         return self.node.matrix_global
@@ -339,10 +353,7 @@ class EntityDelegate(Entity):
     def set_up_node(self, window):
 
         # Create node with local transform
-        if self.np_transform is not None:
-            self.node = mglw.scene.Node(f"{self.id}'s Node", matrix=self.np_transform)
-        else:
-            self.node = mglw.scene.Node(f"{self.id}'s Node", matrix=np.identity(4))
+        self.node = mglw.scene.Node(f"{self.id}'s Node", matrix=self.np_transform)
 
         # Update Scene / State
         if self.parent:
@@ -580,7 +591,7 @@ class GeometryDelegate(Geometry):
 
         # Extract key attributes
         scene = window.scene
-        transform = entity.np_transform if entity.np_transform is not None else np.eye(4)
+        transform = entity.np_transform
         instances = entity.render_rep.instances
 
         # Initialize VAO to store buffers and indices for this patch

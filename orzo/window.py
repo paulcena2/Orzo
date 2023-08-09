@@ -1,11 +1,10 @@
-import queue
 import logging
 import os
 
 import moderngl_window as mglw
 import moderngl
 import numpy as np
-from pyrr import Quaternion
+import quaternion
 from pathlib import Path
 import imgui
 from imgui.integrations.pyglet import create_renderer
@@ -18,10 +17,21 @@ from orzo import programs
 
 current_dir = os.path.dirname(__file__)
 
+# Rendering radius
 SKYBOX_RADIUS = 1000.0
 
+# Shader
 DEFAULT_SHININESS = 10.0
 DEFAULT_SPEC_STRENGTH = 0.2
+
+# Widgets
+WIDGET_SCALE = [0.1, 0.1, 0.1, 1.0]
+X_WIDGET_COLOR = [1.0, 0.0, 0.0, 1.0]
+Y_WIDGET_COLOR = [0.0, 1.0, 0.0, 1.0]
+Z_WIDGET_COLOR = [0.0, 0.0, 1.0, 1.0]
+X_WIDGET_ROTATION = [0.7071, 0.7071, 0.0, 0]
+Y_WIDGET_ROTATION = [0.0, 0.0, 0.0, 1.0]
+Z_WIDGET_ROTATION = [0.7071, 0.0, 0.0, -0.7071]
 
 SPECIFIER_MAP = {
     penne.MethodID: "Methods",
@@ -46,6 +56,26 @@ def get_char(cls, number):
         if attr_value == number:
             return attr_name[-1]
     return None  # Return None if the number is not found in the mapping
+
+
+def get_scale(mat):
+    """Get x, y, and z scale from a matrix"""
+    return np.array([np.linalg.norm(mat[0, :3]), np.linalg.norm(mat[1, :3]), np.linalg.norm(mat[2, :3])])
+
+
+def get_rotation(mat, x, y, z):
+    """Get rotation quaternion from a matrix given the scales"""
+    mat[0, :3] /= x
+    mat[1, :3] /= y
+    mat[2, :3] /= z
+    quat = quaternion.from_rotation_matrix(mat)
+    quat = quaternion.as_float_array(quat)
+    quat[0], quat[1], quat[2], quat[3] = quat[1], quat[2], quat[3], quat[0]
+    return quat
+
+
+def get_translation(mat):
+    return mat[3, :3]
 
 
 def get_distance_to_mesh(camera_pos, mesh):
@@ -118,7 +148,6 @@ class Window(mglw.WindowConfig):
         self.args = {}
         self.selected_entity = None  # Current entity that is selected
         self.selected_instance = None  # Number instance that is selected
-        self.last_click = None  # (x, y) of last click
         self.rotating = False  # Flag for rotating entity on drag
         self.active_widget = None  # String for active widget type
         self.widgets_align_local = 0  # Whether widgets should be axis aligned or local
@@ -345,6 +374,8 @@ class Window(mglw.WindowConfig):
             self.selected_entity = self.client.get_delegate(entity_id)
             self.add_widgets()
 
+        print(f"Active Widget: {self.active_widget}")
+
     def mouse_drag_event(self, x: int, y: int, dx: int, dy: int):
         """Change appearance by changing the mesh's transform"""
 
@@ -405,22 +436,46 @@ class Window(mglw.WindowConfig):
         # Pass event to gui
         self.gui.mouse_release_event(x, y, button)
 
+        # If nothing is selected move on
+        if self.selected_entity is None:
+            return
+
         # Calculate vectors and move if applicable
-        if self.selected_entity and self.last_click != (x, y):
-            preview = self.selected_entity.node.matrix_global
-            old = self.selected_entity.node.children[0].matrix_global
+        preview = self.selected_entity.node.matrix_global
+        old = self.selected_entity.node.children[0].matrix_global
+        if not np.array_equal(preview, old):
 
             try:
-                # Rotation
-                if not np.array_equal(preview[:3, :3], old[:3, :3]):
-                    quat = Quaternion.from_matrix(preview)
-                    self.selected_entity.set_rotation(quat.xyzw.tolist())
 
-                # Position
-                if not np.array_equal(preview[3, :3], old[3, :3]):
-                    x, y, z = preview[3, :3].astype(float)
-                    self.selected_entity.set_position([x, y, z])
-                    self.update_widgets(old, preview)
+                # Decompose matrices
+                # scale, rotation, translation = Matrix44(preview).decompose()
+                # old_scale, old_rotation, old_translation = Matrix44(old).decompose()
+                # rotation, old_rotation = rotation.xyzw, old_rotation.xyzw  # Convert to np arrays
+                scale = get_scale(preview)
+                rotation = get_rotation(preview, *scale)
+                translation = get_translation(preview)
+                old_scale = get_scale(old)
+                old_rotation = get_rotation(old, *old_scale)
+                old_translation = get_translation(old)
+
+                print(f"Differential"
+                      f"\nPosition: {translation - old_translation}"
+                      f"\nRotation: {rotation - old_rotation}"
+                      f"\nScale: {scale - old_scale}")
+
+                # Scale - use np.allclose to avoid floating point errors, absolute difference must be greater than 0.01
+                if not np.allclose(scale, old_scale, atol=0.01):
+                    self.selected_entity.set_scale(scale.tolist())
+
+                # Rotation
+                if not np.allclose(rotation, old_rotation, atol=0.01):
+                    self.selected_entity.set_rotation(rotation.tolist())
+
+                # Position - Only move widgets if not scaling
+                if not np.allclose(translation, old_translation, atol=0.01):
+                    self.selected_entity.set_position(translation.tolist())
+                    if np.allclose(scale, old_scale, atol=0.01):
+                        self.update_widgets(old, preview)
 
             # Server doesn't support these injected methods
             except AttributeError as e:
@@ -451,20 +506,16 @@ class Window(mglw.WindowConfig):
         # modifiers = mglw.context.base.keys.KeyModifiers()
         # self.key_event(key_num, 'ACTION_PRESS', modifiers)
 
-    def add_widgets(self):
-        """Renders x, y, and z handle widgets for moving entities
+    def create_widget_node(self, mesh, radius, offset):
 
-        Idea: get bounding box and render widgets at the center of each positive face
-              put the node as another child of the same selection node
-        """
-
-        center, radius = self.selected_entity.node.mesh.bounding_sphere
-
-        widget_mesh = self.load_scene("arrow.obj").meshes[0]
+        name = mesh[:-4]
+        widget_mesh = self.load_scene(mesh).meshes[0]
         widget_mesh.mesh_program = programs.PhongProgram(self, 3)
-        widget_mesh.name = "noo::widget_translation"
+        widget_mesh.name = f"noo::widget_{name}"
         widget_mesh.norm_factor = (2 ** 32) - 1
         widget_mesh.entity_id = self.selected_entity.id
+        widget_mesh.ghosting = False
+        widget_mesh.has_bounding_sphere = False
         vao = widget_mesh.vao
 
         # Add default colors
@@ -477,41 +528,44 @@ class Window(mglw.WindowConfig):
         buffer_data = np.array(default_texture_coords, np.single)
         vao.buffer(buffer_data, '2f', 'in_texture')
 
-        # Add instances, position, color, rotation quaternion, scale
-        instances = [
-            [
-                [radius, 0, 0, 1],                              # Centered at edge of bbox
-                [1.0, 0.0, 0.0, 0.5],                           # Red
-                [0.7071, 0.7071, 0.0, 0],                       # Rotate 90 degrees around z
-                [.1 * radius, .1 * radius, .1 * radius, 1]      # Scale proportionally
-            ],
-            [
-                [0, radius, 0, 1],                              # Centered at edge of bbox
-                [0.0, 0.0, 1.0, 0.5],                           # Blue
-                [0.0, 0.0, 0.0, 1.0],                           # No rotation
-                [.1 * radius, .1 * radius, .1 * radius, 1]      # Scale proportionally
-            ],
-            [
-                [0, 0, radius, 1],                              # Centered at edge of bbox
-                [0.0, 1.0, 0.0, 0.5],                           # Green
-                [0.7071, 0.0, 0.0, -0.7071],                    # Rotate 90 degrees around x
-                [.1 * radius, .1 * radius, .1 * radius, 1]      # Scale proportionally
-            ]
-        ]
-        instance_data = np.array(instances, np.float32)
-        vao.buffer(instance_data, '16f/i', 'instance_matrix')
+        # Add instances -> position, color, rotation, scale
+        # Instance trio is centered at origin and spaced out by radius
+        instances = np.array([[[radius + offset, 0, 0, 1], X_WIDGET_COLOR, X_WIDGET_ROTATION, WIDGET_SCALE],
+                              [[0, radius + offset, 0, 1], Y_WIDGET_COLOR, Y_WIDGET_ROTATION, WIDGET_SCALE],
+                              [[0, 0, radius + offset, 1], Z_WIDGET_COLOR, Z_WIDGET_ROTATION, WIDGET_SCALE]],
+                             np.float32)
+        instances[:, 3, :3] *= radius  # Scale widget by radius
+        vao.buffer(instances, '16f/i', 'instance_matrix')
 
-        # Add widgets to scene, matrix moves to center of bounding sphere
+        # Create the node
+        widget_node = mglw.scene.Node(f"{name} widget", mesh=widget_mesh, matrix=np.identity(4))
+        return widget_node
+
+    def add_widgets(self):
+        """Renders x, y, and z handle widgets for moving entities
+
+        Create nodes for translation, rotation, and scaling widgets where each has 3 instances
+        Then a parent node will store all the widgets. This parent node stores the translation
+        that essentially does all the work to get things to line up with the entity
+        """
+
+        center, radius = self.selected_entity.node.mesh.bounding_sphere
+
+        # Create the parent node
         if self.widgets_align_local:
             mat = self.selected_entity.node.matrix_global
         else:
             mat = np.identity(4, np.float32)
         mat[3, :3] = center
-        widget_node = mglw.scene.Node("Widgets", mesh=widget_mesh, matrix=mat)
-        widget_mesh.ghosting = False
-        widget_mesh.has_bounding_sphere = False
-
+        widget_node = mglw.scene.Node("Widgets", matrix=mat)
         self.add_node(widget_node)
+
+        # Create mesh nodes
+        meshes = ["cone.obj", "torus.obj", "tab.obj"]
+        offsets = [.5 * radius, 0, 0]
+        for mesh, offset in zip(meshes, offsets):
+            node = self.create_widget_node(mesh, radius, offset)
+            self.add_node(node, parent=widget_node)
 
     def update_widgets(self, old_global, new_global):
         """Update widgets when the entity is moved
@@ -591,10 +645,65 @@ class Window(mglw.WindowConfig):
             selected_node.matrix_global = np.matmul(current_mat_global, translation_mat)
 
     def handle_widget_rotation(self, dx, dy, dz):
-        pass
+        """Rotate along the specified widget axis"""
+        selected_node = self.selected_entity.node
+        current_mat_global = selected_node.matrix_global
+        direction = self.selected_instance
+        center, radius = selected_node.mesh.bounding_sphere
+
+        if direction == 0:  # x axis
+            rotation_mat = np.array([[1, 0, 0, 0], [0, np.cos(dx), -np.sin(dx), 0], [0, np.sin(dx), np.cos(dx), 0], [0, 0, 0, 1]])
+        elif direction == 1:  # y axis
+            rotation_mat = np.array([[np.cos(dy), 0, np.sin(dy), 0], [0, 1, 0, 0], [-np.sin(dy), 0, np.cos(dy), 0], [0, 0, 0, 1]])
+        elif direction == 2:  # z axis
+            rotation_mat = np.array([[np.cos(dz), -np.sin(dz), 0, 0], [np.sin(dz), np.cos(dz), 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+        else:
+            rotation_mat = np.identity(4)
+
+        # Add the rotation to the current matrix
+        if self.widgets_align_local:
+            # global_rotation = current_mat_global
+            # global_rotation[3, :3] = 0
+            # rotation_mat = np.matmul(global_rotation.T, rotation_mat)
+            selected_node.matrix_global = np.matmul(current_mat_global, rotation_mat.T)
+            # TODO Revisit...
+
+        else:
+
+            # Move the pivot point to the center of the bounding sphere, then rotate, then move back
+            to_pivot = np.identity(4)
+            to_pivot[3, :3] = -center
+            from_pivot = np.identity(4)
+            from_pivot[3, :3] = center
+            rotation_mat = np.matmul(to_pivot, np.matmul(rotation_mat.T, from_pivot))
+            selected_node.matrix_global = np.matmul(current_mat_global, rotation_mat)
 
     def handle_widget_scaling(self, dx, dy, dz):
-        pass
+        """Scale along the specified widget axis"""
+        selected_node = self.selected_entity.node
+        current_mat_global = selected_node.matrix_global
+        direction = self.selected_instance
+        center, radius = selected_node.mesh.bounding_sphere
+
+        if direction == 0:
+            scaling_mat = np.array([[1 + dx, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+        elif direction == 1:
+            scaling_mat = np.array([[1, 0, 0, 0], [0, 1 + dy, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+        elif direction == 2:
+            scaling_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1 + dz, 0], [0, 0, 0, 1]])
+        else:
+            scaling_mat = np.identity(4)
+
+        # Add the scaling to the current matrix
+        if self.widgets_align_local:
+            pass
+        else:
+            to_pivot = np.identity(4)
+            to_pivot[3, :3] = -center
+            from_pivot = np.identity(4)
+            from_pivot[3, :3] = center
+            scaling_mat = np.matmul(to_pivot, np.matmul(scaling_mat, from_pivot))
+            selected_node.matrix_global = np.matmul(current_mat_global, scaling_mat)
 
     def render_scene_to_framebuffer(self, x, y):
 
@@ -655,14 +764,11 @@ class Window(mglw.WindowConfig):
         imgui.render()
         self.gui.render(imgui.get_draw_data())
 
-        try:
-            callback_info = Window.client.callback_queue.get(block=False)
+        while not self.client.callback_queue.empty():
+            callback_info = self.client.callback_queue.get()
             callback, args = callback_info
             logging.info(f"Callback in render: {callback.__name__} \n\tw/ args: {args}")
             callback(self, *args)
-
-        except queue.Empty:
-            pass
 
     def render_document(self):
         imgui.begin("Document")
