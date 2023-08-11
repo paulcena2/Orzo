@@ -11,6 +11,7 @@ import io
 import urllib.request
 import json
 import copy
+from collections import namedtuple
 
 from penne import *
 
@@ -29,6 +30,24 @@ class FormatInfo:
     num_components: int
     format: str
     size: int  # in bytes
+
+
+@dataclass
+class ChangeTracker:
+    """Tracks changes to an entity's transform"""
+    translation: bool
+    rotation: bool
+    scale: bool
+
+    def __init__(self):
+        self.translation = False
+        self.rotation = False
+        self.scale = False
+
+    def reset(self):
+        self.translation = False
+        self.rotation = False
+        self.scale = False
 
 
 FORMAT_MAP = {
@@ -274,9 +293,10 @@ class EntityDelegate(Entity):
     np_transform: Optional[np.ndarray] = np.eye(4)
 
     # These correspond to current state -> preview
-    position: Optional[np.ndarray] = np.array([0.0, 0.0, 0.0])
-    rotation: Optional[np.ndarray] = np.array([0.0, 0.0, 0.0, 1.0])
+    translation: Optional[np.ndarray] = np.array([0.0, 0.0, 0.0])
+    rotation: Optional[np.quaternion] = np.quaternion(1.0, 0.0, 0.0, 0.0)  # w, x, y, z
     scale: Optional[np.ndarray] = np.array([1.0, 1.0, 1.0])
+    changed: Optional[ChangeTracker] = ChangeTracker()
 
     def render_entity(self, window):
         """Render the mesh associated with this delegate
@@ -341,10 +361,16 @@ class EntityDelegate(Entity):
     def compose_transform(self):
         """Get a transform matrix given the current scale, rotation, and position"""
         transform = np.eye(4)
-        transform[3, :3] = self.position
-        transform[:3, :3] = quaternion.as_rotation_matrix(np.quaternion(self.rotation))
-        transform[:3, :3] = np.matmul(np.diag(self.scale), transform[:3, :3])
+        transform[3, :3] = self.translation
+        transform[:3, :3] = np.matmul(np.diag(self.scale), quaternion.as_rotation_matrix(self.rotation))
         return transform
+
+    def decompose_transform(self):
+        self.translation = self.np_transform[3, :3]
+        self.scale = np.linalg.norm(self.np_transform[:3, :3], axis=1)
+        inverse_scale = np.linalg.inv(np.diag(self.scale))
+        without_scale = np.matmul(inverse_scale, self.np_transform[:3, :3])
+        self.rotation = quaternion.from_rotation_matrix(without_scale)
 
     def get_world_transform(self):
         """Get the current world transform for the entity"""
@@ -370,10 +396,14 @@ class EntityDelegate(Entity):
         # Create node - even lights are represented with a node
         self.client.callback_queue.put((self.set_up_node, []))
 
-        # Reformat transform and keep separate
+        # Reformat transform and keep separate components
         if self.transform:
             # This keeps in col major order for MGLW
             self.np_transform = np.array(self.transform, np.float32).reshape(4, 4)
+
+            # Decompose transform into components - transform, scales, unit quaternion
+            self.decompose_transform()
+            # TODO: test
 
         # Render mesh
         if self.render_rep:
@@ -398,6 +428,9 @@ class EntityDelegate(Entity):
             self.np_transform = np.array(self.transform, np.float32).reshape(4, 4)
             self.node.matrix = self.np_transform
             self.client.callback_queue.put((self.update_matrices, []))
+
+            self.decompose_transform()
+            self.changed.reset()
 
             # Update light positions
             if self.lights:

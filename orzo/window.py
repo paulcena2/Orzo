@@ -114,7 +114,7 @@ class Window(mglw.WindowConfig):
         self.camera = mglw.scene.camera.KeyboardCamera(self.wnd.keys, aspect_ratio=self.wnd.aspect_ratio)
         self.camera.projection.update(near=0.1, far=1000.0)  # Range where camera will cutoff
         self.camera.mouse_sensitivity = 0.1
-        self.camera.velocity = 2.0
+        self.camera.velocity = 3.0
         self.camera.zoom = 2.5
         self.camera_position = [0.0, 0.0, 0.0]
 
@@ -154,6 +154,7 @@ class Window(mglw.WindowConfig):
         self.move_widgets = True  # Flags for enabling and disabling widgets
         self.rotate_widgets = True
         self.scale_widgets = True
+        self.origin_centered = 0  # Where transforms like rotations should be centered
 
         # Flag for rendering bounding spheres on mesh, can be toggled in GUI
         self.draw_bs = False
@@ -260,23 +261,13 @@ class Window(mglw.WindowConfig):
         click_vec = self.get_ray_from_click(x_last, y_last, world=False)
         release_vec = self.get_ray_from_click(x, y, world=False)
 
-        # Get axis of rotation with cross product
+        # Get axis of rotation and angle
         axis = np.cross(click_vec, release_vec)
-
-        # Get angle of rotation with dot product
-        # angle = np.arccos(np.dot(release_vec, click_vec))
+        axis /= np.sqrt(np.dot(axis, axis))
         angle = .05
 
-        # Create rotation matrix
-        axis = axis / np.sqrt(np.dot(axis, axis))
-        a = np.cos(angle / 2.0)
-        b, c, d = -axis * np.sin(angle / 2.0)
-        aa, bb, cc, dd = a * a, b * b, c * c, d * d
-        bc, ad, ac, ab, bd, cd = b * c, a * d, a * c, a * b, b * d, c * d
-        return np.array([[aa + bb - cc - dd, 2 * (bc + ad), 2 * (bd - ac), 0],
-                        [2 * (bc - ad), aa + cc - bb - dd, 2 * (cd + ab), 0],
-                        [2 * (bd + ac), 2 * (cd - ab), aa + dd - bb - cc, 0],
-                        [0, 0, 0, 1]], dtype=np.float32)
+        # Construct quaternion from axis vector, length is proportional to angle in radians
+        return quaternion.from_rotation_vector(axis * angle)
 
     def key_event(self, key, action, modifiers):
 
@@ -377,7 +368,12 @@ class Window(mglw.WindowConfig):
         print(f"Active Widget: {self.active_widget}")
 
     def mouse_drag_event(self, x: int, y: int, dx: int, dy: int):
-        """Change appearance by changing the mesh's transform"""
+        """Change appearance by changing the mesh's transform
+
+        Essentially, the drag is changing the global matrix of the selected entity's node.
+        This global matrix isn't really correct, given the local transforms, but it allows the
+        preview to render temporarily.
+        """
 
         # Log for debugging events
         print(f"Mouse Drag: {x}, {y}, {dx}, {dy}")
@@ -389,6 +385,7 @@ class Window(mglw.WindowConfig):
             return
 
         x_last, y_last = x - dx, y - dy
+        selected_entity = self.selected_entity
         selected_node = self.selected_entity.node
         current_mat_local = selected_node.matrix
         current_mat_global = selected_node.matrix_global
@@ -406,26 +403,33 @@ class Window(mglw.WindowConfig):
             center, radius = self.selected_entity.node.mesh.bounding_sphere
 
             # Translate the pivot point to the center of the bounding sphere
-            center_translation = np.identity(4)
-            center_translation[3, :3] = -center
-            new_mat = np.matmul(current_mat_global, center_translation)
+            # center_translation = np.identity(4)
+            # center_translation[3, :3] = -center
+            # new_mat = np.matmul(current_mat_global, center_translation)
 
             # Perform the rotation around the pivot point
-            rotation_matrix = self.get_world_rotation(x, y, x_last, y_last)
-            new_mat = np.matmul(new_mat, rotation_matrix)
+            rotation_quat = self.get_world_rotation(x, y, x_last, y_last)
+            selected_entity.rotation = rotation_quat * selected_entity.rotation
+            selected_entity.changed.rotation = True
+            #new_mat = np.matmul(new_mat, rotation_matrix)
 
-            # Translate the object back to its original position
-            inverse_center_translation = np.identity(4)
-            inverse_center_translation[3, :3] = center
-            new_mat = np.matmul(new_mat, inverse_center_translation)
-            selected_node.matrix_global = new_mat
+            # Use new quaternion to get new matrix
+            selected_node.matrix_global = selected_entity.compose_transform()
+
+            # inverse_center_translation = np.identity(4)
+            # inverse_center_translation[3, :3] = center
+            # new_mat = np.matmul(new_mat, inverse_center_translation)
+            # selected_node.matrix_global = new_mat
             # transformation = np.matmul(np.matmul(inverse_pivot_translation, rotation_matrix), pivot_translation)
             # selected_node.matrix_global = np.matmul(current_mat_global, transformation)
 
         else:
             dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
-            translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
-            selected_node.matrix_global = np.matmul(current_mat_global, translation_mat)
+            selected_entity.translation += np.array([dx, dy, dz])
+            selected_entity.changed.translation = True
+            selected_node.matrix_global = selected_entity.compose_transform()
+            # translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
+            # selected_node.matrix_global = np.matmul(current_mat_global, translation_mat)
 
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
@@ -441,41 +445,29 @@ class Window(mglw.WindowConfig):
             return
 
         # Calculate vectors and move if applicable
-        preview = self.selected_entity.node.matrix_global
-        old = self.selected_entity.node.children[0].matrix_global
+        entity = self.selected_entity
+        preview = entity.node.matrix_global
+        old = entity.node.children[0].matrix_global
         if not np.array_equal(preview, old):
 
             try:
 
-                # Decompose matrices
-                # scale, rotation, translation = Matrix44(preview).decompose()
-                # old_scale, old_rotation, old_translation = Matrix44(old).decompose()
-                # rotation, old_rotation = rotation.xyzw, old_rotation.xyzw  # Convert to np arrays
-                scale = get_scale(preview)
-                rotation = get_rotation(preview, *scale)
-                translation = get_translation(preview)
-                old_scale = get_scale(old)
-                old_rotation = get_rotation(old, *old_scale)
-                old_translation = get_translation(old)
+                if entity.changed.translation:
+                    entity.set_position(entity.translation.tolist())
 
-                print(f"Differential"
-                      f"\nPosition: {translation - old_translation}"
-                      f"\nRotation: {rotation - old_rotation}"
-                      f"\nScale: {scale - old_scale}")
+                if entity.changed.rotation:
+                    rearranged = [entity.rotation.x, entity.rotation.y, entity.rotation.z, entity.rotation.w]
+                    entity.set_rotation(rearranged)
 
-                # Scale - use np.allclose to avoid floating point errors, absolute difference must be greater than 0.01
-                if not np.allclose(scale, old_scale, atol=0.01):
-                    self.selected_entity.set_scale(scale.tolist())
+                if entity.changed.scale:
+                    entity.set_scale(entity.scale.tolist())
 
-                # Rotation
-                if not np.allclose(rotation, old_rotation, atol=0.01):
-                    self.selected_entity.set_rotation(rotation.tolist())
+                plain_translation = not entity.changed.rotation and not entity.changed.scale
+                rotate_around_origin = entity.changed.rotation and self.origin_centered
+                if plain_translation or rotate_around_origin:
+                    self.update_widgets(old, preview)
 
-                # Position - Only move widgets if not scaling
-                if not np.allclose(translation, old_translation, atol=0.01):
-                    self.selected_entity.set_position(translation.tolist())
-                    if np.allclose(scale, old_scale, atol=0.01):
-                        self.update_widgets(old, preview)
+                entity.changed.reset()
 
             # Server doesn't support these injected methods
             except AttributeError as e:
@@ -621,89 +613,88 @@ class Window(mglw.WindowConfig):
 
     def handle_widget_translation(self, dx, dy, dz):
 
-        selected_node = self.selected_entity.node
-        current_mat_global = selected_node.matrix_global
+        entity = self.selected_entity
         direction = self.selected_instance
+        deltas = np.array([dx, dy, dz])
 
-        if direction == 0:  # x axis
-            translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, 0, 0, 1]])
-        elif direction == 1:  # y axis
-            translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, dy, 0, 1]])
-        elif direction == 2:  # z axis
-            translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, dz, 1]])
+        # Translate in direction of widget
+        if not self.widgets_align_local:
+            entity.translation[direction] += deltas[direction]
         else:
-            translation_mat = np.identity(4)
+            entity.translation += entity.node.matrix_global[:3, direction] * deltas[direction]
 
         # Add the translation to the current matrix
-        if self.widgets_align_local:
-            translation_mat = np.matmul(translation_mat, current_mat_global)
-
-            # Apply the local translation to the current matrix
-            selected_node.matrix_global[3, :3] = translation_mat[3, :3]
-
-        else:
-            selected_node.matrix_global = np.matmul(current_mat_global, translation_mat)
+        entity.changed.translation = True
+        entity.node.matrix_global = entity.compose_transform()
 
     def handle_widget_rotation(self, dx, dy, dz):
         """Rotate along the specified widget axis"""
-        selected_node = self.selected_entity.node
-        current_mat_global = selected_node.matrix_global
+        entity = self.selected_entity
+        selected_node = entity.node
         direction = self.selected_instance
         center, radius = selected_node.mesh.bounding_sphere
 
+        sensitivity = 1
         if direction == 0:  # x axis
-            rotation_mat = np.array([[1, 0, 0, 0], [0, np.cos(dx), -np.sin(dx), 0], [0, np.sin(dx), np.cos(dx), 0], [0, 0, 0, 1]])
+            rotation_quat = np.quaternion(np.cos(dx / sensitivity), np.sin(dx / sensitivity), 0, 0)
         elif direction == 1:  # y axis
-            rotation_mat = np.array([[np.cos(dy), 0, np.sin(dy), 0], [0, 1, 0, 0], [-np.sin(dy), 0, np.cos(dy), 0], [0, 0, 0, 1]])
+            rotation_quat = np.quaternion(np.cos(dy / sensitivity), 0, np.sin(dy / sensitivity), 0)
         elif direction == 2:  # z axis
-            rotation_mat = np.array([[np.cos(dz), -np.sin(dz), 0, 0], [np.sin(dz), np.cos(dz), 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+            rotation_quat = np.quaternion(np.cos(dz / sensitivity), 0, 0, np.sin(dz / sensitivity))
         else:
-            rotation_mat = np.identity(4)
+            rotation_quat = np.quaternion(1, 0, 0, 0)
+
+        # First one works but repeated does not
+        if not self.origin_centered:
+            # Add translation to keep things centered
+            shifted_origin = entity.translation - center
+            inverse_rotation = np.quaternion(rotation_quat.w, -rotation_quat.x, -rotation_quat.y, -rotation_quat.z)
+            rotated = quaternion.rotate_vectors(inverse_rotation, shifted_origin)
+            entity.translation = rotated + center
+            entity.changed.translation = True
 
         # Add the rotation to the current matrix
-        if self.widgets_align_local:
-            # global_rotation = current_mat_global
-            # global_rotation[3, :3] = 0
-            # rotation_mat = np.matmul(global_rotation.T, rotation_mat)
-            selected_node.matrix_global = np.matmul(current_mat_global, rotation_mat.T)
-            # TODO Revisit...
+        entity.rotation = entity.rotation * rotation_quat
+        entity.changed.rotation = True
+        entity.node.matrix_global = entity.compose_transform()
 
-        else:
-
-            # Move the pivot point to the center of the bounding sphere, then rotate, then move back
-            to_pivot = np.identity(4)
-            to_pivot[3, :3] = -center
-            from_pivot = np.identity(4)
-            from_pivot[3, :3] = center
-            rotation_mat = np.matmul(to_pivot, np.matmul(rotation_mat.T, from_pivot))
-            selected_node.matrix_global = np.matmul(current_mat_global, rotation_mat)
+        # Add the rotation to the current matrix
+        # if self.widgets_align_local:
+        #     # global_rotation = current_mat_global
+        #     # global_rotation[3, :3] = 0
+        #     # rotation_mat = np.matmul(global_rotation.T, rotation_mat)
+        #     selected_node.matrix_global = np.matmul(current_mat_global, rotation_mat.T)
+        #     # TODO Revisit...
 
     def handle_widget_scaling(self, dx, dy, dz):
         """Scale along the specified widget axis"""
-        selected_node = self.selected_entity.node
+        entity = self.selected_entity
+        selected_node = entity.node
         current_mat_global = selected_node.matrix_global
         direction = self.selected_instance
         center, radius = selected_node.mesh.bounding_sphere
+        deltas = np.array([dx, dy, dz])
+        origin = current_mat_global[:3, 3]
 
-        if direction == 0:
-            scaling_mat = np.array([[1 + dx, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
-        elif direction == 1:
-            scaling_mat = np.array([[1, 0, 0, 0], [0, 1 + dy, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
-        elif direction == 2:
-            scaling_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1 + dz, 0], [0, 0, 0, 1]])
+        # Scale in direction of widget
+        if not self.widgets_align_local:
+            scaling_vec = np.zeros(3)
+            scaling_vec[direction] = deltas[direction]
+            rotated_scale = quaternion.rotate_vectors(entity.rotation, scaling_vec)
+            if np.dot(rotated_scale, scaling_vec) < 0:
+                rotated_scale *= -1
+                entity.translation += scaling_vec * (radius / 2) * (center - origin)
+            else:
+                entity.translation -= scaling_vec * (radius / 2) * (center - origin)
+            entity.scale += rotated_scale
+            entity.changed.translation = True
+
         else:
-            scaling_mat = np.identity(4)
+            entity.scale += entity.node.matrix_global[:3, direction] * deltas[direction]
 
         # Add the scaling to the current matrix
-        if self.widgets_align_local:
-            pass
-        else:
-            to_pivot = np.identity(4)
-            to_pivot[3, :3] = -center
-            from_pivot = np.identity(4)
-            from_pivot[3, :3] = center
-            scaling_mat = np.matmul(to_pivot, np.matmul(scaling_mat, from_pivot))
-            selected_node.matrix_global = np.matmul(current_mat_global, scaling_mat)
+        entity.changed.scale = True
+        entity.node.matrix_global = entity.compose_transform()
 
     def render_scene_to_framebuffer(self, x, y):
 
@@ -862,6 +853,9 @@ class Window(mglw.WindowConfig):
                     preview = self.selected_entity.node.matrix_global
                     old = self.selected_entity.node.children[0].matrix_global
                     self.update_widgets(old, preview)
+                clicked, self.origin_centered = imgui.combo(
+                    "Transformation Origin", self.origin_centered, ["Center of Mesh", "Object Origin"]
+                )
 
                 imgui.end_menu()
             imgui.end_main_menu_bar()
