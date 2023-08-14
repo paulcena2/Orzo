@@ -358,11 +358,21 @@ class EntityDelegate(Entity):
         for light_id in self.lights:
             del window.lights[light_id]
 
-    def compose_transform(self):
-        """Get a transform matrix given the current scale, rotation, and position"""
+    def compose_transform(self, translation=None, rotation=None, scale=None):
+        """Get a transform matrix given the current scale, rotation, and position
+
+        Defaults to using current state, but can also accept args to use other values
+        """
+        if translation is None:
+            translation = self.translation
+        if rotation is None:
+            rotation = self.rotation
+        if scale is None:
+            scale = self.scale
+
         transform = np.eye(4)
-        transform[3, :3] = self.translation
-        transform[:3, :3] = np.matmul(np.diag(self.scale), quaternion.as_rotation_matrix(self.rotation))
+        transform[3, :3] = translation
+        transform[:3, :3] = np.matmul(np.diag(scale), quaternion.as_rotation_matrix(rotation))
         return transform
 
     def decompose_transform(self):
@@ -596,24 +606,26 @@ class GeometryDelegate(Geometry):
 
     def render_patch(self, patch, window, entity):
 
-        def extract_bytes(raw_bytes, offset, length, stride, format):
-            attr_bytes = b''
-            starts = range(offset, offset + length, stride)
+        def extract_bytes(raw_bytes, attr_offset, length, attr_stride, attr_format):
+            attr_specific_bytes = b''
+            if attr_stride == 0:
+                attr_stride = attr_format.size * attr_format.num_components
+            starts = range(attr_offset, attr_offset + length, attr_stride)
             for start in starts:
-                attr_bytes += raw_bytes[start:start+(format.size * format.num_components)]
-            return attr_bytes
+                attr_specific_bytes += raw_bytes[start:start + (attr_format.size * attr_format.num_components)]
+            return attr_specific_bytes
 
-        def reformat_color(raw_bytes, format):
+        def reformat_color(raw_bytes, color_format):
             # Reformat all colors to consistent u8vec4's
 
-            if format == "U8VEC4":
+            if color_format == "U8VEC4":
                 return raw_bytes
 
-            vals = np.frombuffer(raw_bytes, dtype=NP_FORMAT_MAP[format])
+            vals = np.frombuffer(raw_bytes, dtype=NP_FORMAT_MAP[color_format])
             max_val = np.finfo(np.single).max
             vals *= max_val  # not sure about this
 
-            if format == "VEC3":
+            if color_format == "VEC3":
                 # Pad to 4
                 grouped = vals.reshape((-1, 3))
                 col = np.array([1]*len(grouped))

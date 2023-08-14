@@ -212,7 +212,7 @@ class FrameSelectProgram(MeshProgram):
             FrameSelectProgram.camera_position = tuple(camera_world.m4[:3])
         self.program["camera_position"].value = FrameSelectProgram.camera_position
 
-        # # Hack to change culling for double_sided material
+        # Hack to change culling for double_sided material
         if hasattr(mesh.material, "double_sided") and mesh.material.double_sided:
             mesh.vao.ctx.disable(moderngl.CULL_FACE)
         else:

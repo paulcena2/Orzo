@@ -150,8 +150,8 @@ class Window(mglw.WindowConfig):
         self.selected_instance = None  # Number instance that is selected
         self.rotating = False  # Flag for rotating entity on drag
         self.active_widget = None  # String for active widget type
-        self.widgets_align_local = 0  # Whether widgets should be axis aligned or local
-        self.move_widgets = True  # Flags for enabling and disabling widgets
+        self.widgets_align_local = 1  # Whether widgets should be axis aligned or local
+        self.translate_widgets = True  # Flags for enabling and disabling widgets
         self.rotate_widgets = True
         self.scale_widgets = True
         self.origin_centered = 0  # Where transforms like rotations should be centered
@@ -385,13 +385,10 @@ class Window(mglw.WindowConfig):
             return
 
         x_last, y_last = x - dx, y - dy
-        selected_entity = self.selected_entity
-        selected_node = self.selected_entity.node
-        current_mat_local = selected_node.matrix
-        current_mat_global = selected_node.matrix_global
+        entity = self.selected_entity
 
         # Turn on ghosting effect
-        selected_node.mesh.ghosting = True
+        entity.node.mesh.ghosting = True
 
         # If widgeting, move using the widget's rules
         if self.active_widget is not None:
@@ -402,34 +399,25 @@ class Window(mglw.WindowConfig):
         elif self.rotating:
             center, radius = self.selected_entity.node.mesh.bounding_sphere
 
-            # Translate the pivot point to the center of the bounding sphere
-            # center_translation = np.identity(4)
-            # center_translation[3, :3] = -center
-            # new_mat = np.matmul(current_mat_global, center_translation)
-
-            # Perform the rotation around the pivot point
             rotation_quat = self.get_world_rotation(x, y, x_last, y_last)
-            selected_entity.rotation = rotation_quat * selected_entity.rotation
-            selected_entity.changed.rotation = True
-            #new_mat = np.matmul(new_mat, rotation_matrix)
 
-            # Use new quaternion to get new matrix
-            selected_node.matrix_global = selected_entity.compose_transform()
+            # Add translation to keep things centered
+            shifted_origin = entity.translation - center
+            inverse_rotation = np.quaternion(rotation_quat.w, -rotation_quat.x, -rotation_quat.y, -rotation_quat.z)
+            rotated = quaternion.rotate_vectors(inverse_rotation, shifted_origin)
+            entity.translation = rotated + center
+            entity.changed.translation = True
 
-            # inverse_center_translation = np.identity(4)
-            # inverse_center_translation[3, :3] = center
-            # new_mat = np.matmul(new_mat, inverse_center_translation)
-            # selected_node.matrix_global = new_mat
-            # transformation = np.matmul(np.matmul(inverse_pivot_translation, rotation_matrix), pivot_translation)
-            # selected_node.matrix_global = np.matmul(current_mat_global, transformation)
+            # Add the rotation to the current matrix
+            entity.rotation = entity.rotation * rotation_quat
+            entity.changed.rotation = True
+            entity.node.matrix_global = entity.compose_transform()
 
         else:
             dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
-            selected_entity.translation += np.array([dx, dy, dz])
-            selected_entity.changed.translation = True
-            selected_node.matrix_global = selected_entity.compose_transform()
-            # translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
-            # selected_node.matrix_global = np.matmul(current_mat_global, translation_mat)
+            entity.translation += np.array([dx, dy, dz])
+            entity.changed.translation = True
+            entity.node.matrix_global = entity.compose_transform()
 
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
@@ -464,7 +452,8 @@ class Window(mglw.WindowConfig):
 
                 plain_translation = not entity.changed.rotation and not entity.changed.scale
                 rotate_around_origin = entity.changed.rotation and self.origin_centered
-                if plain_translation or rotate_around_origin:
+                local_rotation = entity.changed.rotation and self.widgets_align_local
+                if plain_translation or rotate_around_origin or local_rotation:
                     self.update_widgets(old, preview)
 
                 entity.changed.reset()
@@ -541,11 +530,13 @@ class Window(mglw.WindowConfig):
         that essentially does all the work to get things to line up with the entity
         """
 
-        center, radius = self.selected_entity.node.mesh.bounding_sphere
+        # Get entity info
+        entity = self.selected_entity
+        center, radius = entity.node.mesh.bounding_sphere
 
         # Create the parent node
         if self.widgets_align_local:
-            mat = self.selected_entity.node.matrix_global
+            mat = entity.compose_transform(scale=np.array([1.0, 1.0, 1.0]))  # Get global without scaling
         else:
             mat = np.identity(4, np.float32)
         mat[3, :3] = center
@@ -553,8 +544,16 @@ class Window(mglw.WindowConfig):
         self.add_node(widget_node)
 
         # Create mesh nodes
-        meshes = ["cone.obj", "torus.obj", "tab.obj"]
-        offsets = [.5 * radius, 0, 0]
+        meshes, offsets = [], []
+        if self.translate_widgets:
+            meshes.append("cone.obj")
+            offsets.append(.5 * radius)
+        if self.rotate_widgets:
+            meshes.append("torus.obj")
+            offsets.append(0)
+        if self.scale_widgets:
+            meshes.append("tab.obj")
+            offsets.append(0)
         for mesh, offset in zip(meshes, offsets):
             node = self.create_widget_node(mesh, radius, offset)
             self.add_node(node, parent=widget_node)
@@ -568,7 +567,8 @@ class Window(mglw.WindowConfig):
         """
 
         # Update bounding sphere in mesh
-        selected_mesh = self.selected_entity.node.mesh
+        entity = self.selected_entity
+        selected_mesh = entity.node.mesh
         old_center, old_radius = selected_mesh.bounding_sphere
 
         # Homogenize
@@ -584,8 +584,9 @@ class Window(mglw.WindowConfig):
 
         # Update the widget transforms
         if self.widgets_align_local:
-            new_global[3, :3] = new_center
-            self.scene.find_node("Widgets").matrix = new_global
+            new_mat = entity.compose_transform(scale=np.array([1.0, 1.0, 1.0]))  # Get global without scaling
+            new_mat[3, :3] = new_center
+            self.scene.find_node("Widgets").matrix = new_mat
         else:
             new_mat = np.identity(4)
             new_mat[3, :3] = new_center
@@ -621,7 +622,9 @@ class Window(mglw.WindowConfig):
         if not self.widgets_align_local:
             entity.translation[direction] += deltas[direction]
         else:
-            entity.translation += entity.node.matrix_global[:3, direction] * deltas[direction]
+            widget_direction = entity.node.matrix_global[direction, :3]
+            magnitude = np.dot(deltas, widget_direction)
+            entity.translation += widget_direction * magnitude
 
         # Add the translation to the current matrix
         entity.changed.translation = True
@@ -630,67 +633,53 @@ class Window(mglw.WindowConfig):
     def handle_widget_rotation(self, dx, dy, dz):
         """Rotate along the specified widget axis"""
         entity = self.selected_entity
-        selected_node = entity.node
         direction = self.selected_instance
-        center, radius = selected_node.mesh.bounding_sphere
+        center, radius = entity.node.mesh.bounding_sphere
+        widgets = self.scene.find_node("Widgets")
 
-        sensitivity = 1
-        if direction == 0:  # x axis
-            rotation_quat = np.quaternion(np.cos(dx / sensitivity), np.sin(dx / sensitivity), 0, 0)
-        elif direction == 1:  # y axis
-            rotation_quat = np.quaternion(np.cos(dy / sensitivity), 0, np.sin(dy / sensitivity), 0)
-        elif direction == 2:  # z axis
-            rotation_quat = np.quaternion(np.cos(dz / sensitivity), 0, 0, np.sin(dz / sensitivity))
-        else:
-            rotation_quat = np.quaternion(1, 0, 0, 0)
+        # Get the rotation quaternion
+        widget_vec = widgets.children[direction].matrix_global[direction, :3]
+        vec = np.dot(widget_vec, np.array([dx, dy, dz])) * widget_vec
+        rotation_quat = quaternion.from_rotation_vector(vec)
 
-        # First one works but repeated does not
-        if not self.origin_centered:
-            # Add translation to keep things centered
-            shifted_origin = entity.translation - center
-            inverse_rotation = np.quaternion(rotation_quat.w, -rotation_quat.x, -rotation_quat.y, -rotation_quat.z)
-            rotated = quaternion.rotate_vectors(inverse_rotation, shifted_origin)
-            entity.translation = rotated + center
-            entity.changed.translation = True
-
-        # Add the rotation to the current matrix
+        # Apply Rotation
         entity.rotation = entity.rotation * rotation_quat
         entity.changed.rotation = True
-        entity.node.matrix_global = entity.compose_transform()
 
-        # Add the rotation to the current matrix
-        # if self.widgets_align_local:
-        #     # global_rotation = current_mat_global
-        #     # global_rotation[3, :3] = 0
-        #     # rotation_mat = np.matmul(global_rotation.T, rotation_mat)
-        #     selected_node.matrix_global = np.matmul(current_mat_global, rotation_mat.T)
-        #     # TODO Revisit...
+        if not self.origin_centered:
+            # Rotate around the center of the mesh - to pivot, then rotate, then go back to see new origin position
+            to_pivot, from_pivot, rotation_mat = np.identity(4), np.identity(4), np.identity(4)
+            to_pivot[3, :3] = -center
+            from_pivot[3, :3] = center
+            rotation_mat[:3, :3] = quaternion.as_rotation_matrix(rotation_quat)
+            rotation_mat = np.matmul(to_pivot, np.matmul(rotation_mat, from_pivot))
+            entity.translation = np.matmul(np.array([entity.translation[0], entity.translation[1], entity.translation[2], 1]), rotation_mat)[:3]
+            entity.changed.translation = True
+
+        entity.node.matrix_global = entity.compose_transform()
 
     def handle_widget_scaling(self, dx, dy, dz):
         """Scale along the specified widget axis"""
         entity = self.selected_entity
-        selected_node = entity.node
-        current_mat_global = selected_node.matrix_global
+        current_mat_global = entity.node.matrix_global
         direction = self.selected_instance
-        center, radius = selected_node.mesh.bounding_sphere
+        center, radius = entity.node.mesh.bounding_sphere
         deltas = np.array([dx, dy, dz])
         origin = current_mat_global[:3, 3]
+        widgets = self.scene.find_node("Widgets")
 
         # Scale in direction of widget
-        if not self.widgets_align_local:
-            scaling_vec = np.zeros(3)
-            scaling_vec[direction] = deltas[direction]
-            rotated_scale = quaternion.rotate_vectors(entity.rotation, scaling_vec)
-            if np.dot(rotated_scale, scaling_vec) < 0:
-                rotated_scale *= -1
-                entity.translation += scaling_vec * (radius / 2) * (center - origin)
-            else:
-                entity.translation -= scaling_vec * (radius / 2) * (center - origin)
-            entity.scale += rotated_scale
-            entity.changed.translation = True
+        widget_vec = widgets.children[direction].matrix_global[direction, :3]
+        magnitude = np.dot(deltas, widget_vec)
+        rotated_scale = quaternion.rotate_vectors(entity.rotation, widget_vec)
+        entity.scale += rotated_scale * magnitude
 
+        # Translate to keep things centered
+        if np.dot(rotated_scale, widget_vec) < 0:
+            entity.translation += widget_vec * magnitude * (radius / 2) * (center - origin)
         else:
-            entity.scale += entity.node.matrix_global[:3, direction] * deltas[direction]
+            entity.translation -= widget_vec * magnitude * (radius / 2) * (center - origin)
+        entity.changed.translation = True
 
         # Add the scaling to the current matrix
         entity.changed.scale = True
@@ -809,7 +798,7 @@ class Window(mglw.WindowConfig):
             if imgui.begin_menu("Settings", True):
 
                 # Bboxes
-                clicked, self.draw_bs = imgui.checkbox("Show Bounding Boxes", self.draw_bs)
+                clicked, self.draw_bs = imgui.checkbox("Show Bounding Spheres", self.draw_bs)
 
                 # Skybox
                 clicked, self.skybox_on = imgui.checkbox("Use Skybox", self.skybox_on)
@@ -843,9 +832,16 @@ class Window(mglw.WindowConfig):
 
                 # Widget Settings
                 imgui.menu_item("Widget Settings", None, False, True)
-                changed, self.move_widgets = imgui.checkbox("Movement Widgets", self.move_widgets)
-                changed, self.rotate_widgets = imgui.checkbox("Rotation Widgets", self.rotate_widgets)
-                changed, self.scale_widgets = imgui.checkbox("Scaling Widgets", self.scale_widgets)
+
+                # Toggle which are active
+                changed_t, self.translate_widgets = imgui.checkbox("Movement Widgets", self.translate_widgets)
+                changed_r, self.rotate_widgets = imgui.checkbox("Rotation Widgets", self.rotate_widgets)
+                changed_s, self.scale_widgets = imgui.checkbox("Scaling Widgets", self.scale_widgets)
+                if changed_t or changed_r or changed_s:
+                    self.remove_widgets()
+                    self.add_widgets()
+
+                # Toggle alignment
                 clicked, self.widgets_align_local = imgui.combo(
                     "Widget Alignment", self.widgets_align_local, ["Global", "Local"]
                 )
@@ -853,6 +849,8 @@ class Window(mglw.WindowConfig):
                     preview = self.selected_entity.node.matrix_global
                     old = self.selected_entity.node.children[0].matrix_global
                     self.update_widgets(old, preview)
+
+                # Toggle origin
                 clicked, self.origin_centered = imgui.combo(
                     "Transformation Origin", self.origin_centered, ["Center of Mesh", "Object Origin"]
                 )
@@ -866,7 +864,7 @@ class Window(mglw.WindowConfig):
         imgui.text(f"Press 'Space' to toggle camera/GUI")
         imgui.text(f"Click and drag an entity to move it")
         imgui.text(f"Hold 'r' while dragging to rotate an entity")
-        _, self.draw_bs = imgui.checkbox("Show Bounding Boxes", self.draw_bs)
+        _, self.draw_bs = imgui.checkbox("Show Bounding Spheres", self.draw_bs)
         imgui.end()
 
         # Render Document Methods and Signals or selection
