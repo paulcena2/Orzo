@@ -60,22 +60,23 @@ class PhongProgram(MeshProgram):
         self.program["m_proj"].write(projection_matrix)
         self.program["m_model"].write(model_matrix)
         self.program["m_cam"].write(camera_matrix)
-        self.program["normalization_factor"].value = mesh.norm_factor
         self.program["shininess"].value = self.window.shininess
         self.program["spec_strength"].value = self.window.spec_strength
+        self.program["ghosting"].value = mesh.ghosting
 
         # Draw bounding box if enabled
-        if self.window.draw_bboxes:
-            mesh.draw_bbox(projection_matrix, model_matrix, camera_matrix, self.bbox_program, bbox())  # Everything pushed to origin for x and y, something up with bbox()?
+        if self.window.draw_bs and mesh.has_bounding_sphere:
+            # mesh.draw_bbox(projection_matrix, model_matrix, camera_matrix, self.bbox_program, bbox())
+            # Get rid of model matrix and rely on recalculating bbox to world space
+            # mesh.draw_bbox(projection_matrix, np.identity(4, dtype='f4'), camera_matrix, self.bbox_program, bbox())
+            pass  # TODO: Transition to bounding spheres
 
         # Add highlight effect if there is a selection, everything not selected gets a little dull
-        selection = self.window.selection
+        selection = self.window.selected_entity
         if selection is not None and selection.id != mesh.entity_id:
             self.program["attention"].value = 0.5
         else:
             self.program["attention"].value = 1.0
-
-        # If mesh is selected, draw widgets
 
         # Only invert matrix / calculate camera position if camera is moved
         if list(camera_matrix) != PhongProgram.current_camera_matrix:
@@ -193,6 +194,16 @@ class FrameSelectProgram(MeshProgram):
         self.program["m_cam"].write(camera_matrix)
         self.program["id"].value = tuple(mesh.entity_id)
 
+        # Set flag for widget or actual entity
+        if mesh.name == "noo::widget_cone":
+            self.program["hit_value"].value = 2
+        elif mesh.name == "noo::widget_torus":
+            self.program["hit_value"].value = 3
+        elif mesh.name == "noo::widget_tab":
+            self.program["hit_value"].value = 4
+        else:
+            self.program["hit_value"].value = 1
+
         # Only invert matrix / calculate camera position if camera is moved
         if list(camera_matrix) != FrameSelectProgram.current_camera_matrix:
             camera_world = np.linalg.inv(camera_matrix)
@@ -201,10 +212,10 @@ class FrameSelectProgram(MeshProgram):
         self.program["camera_position"].value = FrameSelectProgram.camera_position
 
         # Hack to change culling for double_sided material
-        if mesh.material.double_sided:
+        if hasattr(mesh.material, "double_sided") and mesh.material.double_sided:
             mesh.vao.ctx.disable(moderngl.CULL_FACE)
         else:
-            mesh.vao.ctx.enable(moderngl.CULL_FACE)
+            self.ctx.enable(moderngl.CULL_FACE | moderngl.DEPTH_TEST)
 
         num_instances = 1 if self.num_instances == -1 else self.num_instances
         mesh.vao.render(self.program, instances=num_instances)

@@ -10,16 +10,17 @@ if TYPE_CHECKING:
 import io
 import urllib.request
 import json
-import logging
+import copy
+from collections import namedtuple
 
 from penne import *
 
 import moderngl_window as mglw
 import moderngl
 import numpy as np
+import quaternion
 from PIL import Image as img
 import imgui
-from pyrr import Quaternion
 
 from . import programs
 
@@ -29,6 +30,24 @@ class FormatInfo:
     num_components: int
     format: str
     size: int  # in bytes
+
+
+@dataclass
+class ChangeTracker:
+    """Tracks changes to an entity's transform"""
+    translation: bool
+    rotation: bool
+    scale: bool
+
+    def __init__(self):
+        self.translation = False
+        self.rotation = False
+        self.scale = False
+
+    def reset(self):
+        self.translation = False
+        self.rotation = False
+        self.scale = False
 
 
 FORMAT_MAP = {
@@ -248,6 +267,13 @@ class EntityDelegate(Entity):
     """Delegate for overarching entities
     
     Can be container for storing meshes, lights, or plots
+
+    In the scene, this is implemented with a moderngl-window node. This node has a local and global matrix which
+    are updated to reflect the entities transform. The node also has a list of children which contain patches for
+    the meshes. If the entity has a mesh, a version is stored in the entities node to use as a ghost preview. Another
+    is stored in the child node.
+
+    Lights are attached to the scene and updated with the entity's transform.
     
     Attributes:
         name (str): Name of the entity, defaults to 'No-Name Entity'
@@ -264,16 +290,19 @@ class EntityDelegate(Entity):
     table_delegate: Optional[TableDelegate] = None
     num_instances: Optional[int] = 0
     instance_positions: Optional[np.ndarray] = None
-    np_transform: Optional[np.ndarray] = None
+    np_transform: Optional[np.ndarray] = np.eye(4)
+
+    # These correspond to current state -> preview
+    translation: Optional[np.ndarray] = np.array([0.0, 0.0, 0.0])
+    rotation: Optional[np.quaternion] = np.quaternion(1.0, 0.0, 0.0, 0.0)  # w, x, y, z
+    scale: Optional[np.ndarray] = np.array([1.0, 1.0, 1.0])
+    changed: Optional[ChangeTracker] = ChangeTracker()
 
     def render_entity(self, window):
         """Render the mesh associated with this delegate
         
         Will be called as callback from window
         """
-
-        # Set up the node for the entity / mesh
-        self.set_up_node(window)
 
         # Prepare Mesh
         geometry = self.client.get_delegate(self.render_rep.mesh)
@@ -283,9 +312,11 @@ class EntityDelegate(Entity):
         # Add geometry patch nodes as children to main
         for node in self.patch_nodes:
             node.matrix = np.identity(4, np.float64)
-            node.matrix_global = self.get_world_transform()
-            self.node.add_child(node)
-            window.scene.nodes.append(node)
+            window.add_node(node, parent=self.node)
+
+    def remove_from_render(self, window):
+        """Remove mesh from render"""
+        window.remove_node(self.node)
 
     def attach_lights(self, window):
         """Callback to handle lights attached to an entity"""
@@ -300,7 +331,6 @@ class EntityDelegate(Entity):
             # Add positional and directional info to the light
             light_info = light_delegate.light_basics
             world_transform = self.get_world_transform()
-            wtt = world_transform.transpose()
             pos = np.matmul(np.array([0.0, 0.0, 0.0, 1.0]), world_transform)
             direction = np.matmul(np.array([0.0, 0.0, -1.0, 1.0]), world_transform)
             light_info["world_position"] = (pos[0] / pos[3], pos[1] / pos[3], pos[2] / pos[3])
@@ -328,90 +358,62 @@ class EntityDelegate(Entity):
         for light_id in self.lights:
             del window.lights[light_id]
 
+    def compose_transform(self, translation=None, rotation=None, scale=None):
+        """Get a transform matrix given the current scale, rotation, and position
+
+        Defaults to using current state, but can also accept args to use other values
+        """
+        if translation is None:
+            translation = self.translation
+        if rotation is None:
+            rotation = self.rotation
+        if scale is None:
+            scale = self.scale
+
+        transform = np.eye(4)
+        transform[3, :3] = translation
+        transform[:3, :3] = np.matmul(np.diag(scale), quaternion.as_rotation_matrix(rotation))
+        return transform
+
+    def decompose_transform(self):
+        self.translation = self.np_transform[3, :3]
+        self.scale = np.linalg.norm(self.np_transform[:3, :3], axis=1)
+        inverse_scale = np.linalg.inv(np.diag(self.scale))
+        without_scale = np.matmul(inverse_scale, self.np_transform[:3, :3])
+        self.rotation = quaternion.from_rotation_matrix(without_scale)
+
     def get_world_transform(self):
-        """Recursive function to get world transform for an entity"""
-
-        if self.np_transform is not None:
-            local_transform = self.np_transform
-        else:
-            local_transform = np.identity(4, np.float32)
-
-        if self.parent:
-            parent = self.client.get_delegate(self.parent)
-            return np.matmul(local_transform, parent.get_world_transform())
-        else:
-            return local_transform
-
-    def update_node_transform(self, node: mglw.scene.Node):
-        """Recursive function to update nodes"""
-
-        for child in node.children:
-            child.matrix_global = np.matmul(child.matrix, node.matrix_global)
-            self.update_node_transform(child)
-
-    def remove_from_render(self, window):
-        """Remove mesh from render"""
-
-        # Need to test, enough to remove from render?
-        scene = window.scene
-        if self.parent:
-            parent = self.client.get_delegate(self.parent)
-            parent.node.children.remove(self.node)
-        else:
-            window.root.children.remove(self.node)  # Caused error! maybe node isn't set back up correctly on update
-
-        # Update state in scene
-        scene.nodes.remove(self.node)
-        if self.node.mesh:
-            scene.meshes.remove(self.node.mesh)
-
-    def request_move(self, dx, dy, dz):
-        """Take 2d drag and get 3d coordinates to move entity"""
-
-        current_mat = self.np_transform if self.np_transform is not None else np.identity(4, np.float32)
-        translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
-        self.np_transform = np.matmul(current_mat, translation_mat)
-        world_transform = self.get_world_transform()
-        x, y, z = world_transform[3, :3]
-
-        self.set_position([x, y, z])
-
-    def request_rotate(self, dx, dy, dz):
-        """Take drag and get quaternion to rotate entity"""
-
-        # Get direction vector - No idea if this is valid
-        x = Quaternion.from_x_rotation(dx)
-        y = Quaternion.from_y_rotation(dy)
-        z = Quaternion.from_z_rotation(dz)
-        new_quat = x.cross(y).cross(z)
-        self.set_rotation(list(new_quat))
+        """Get the current world transform for the entity"""
+        return self.node.matrix_global
 
     def set_up_node(self, window):
 
-        # Get local matrix
-        if self.np_transform is not None:
-            matrix = self.np_transform
-        else:
-            matrix = np.identity(4, np.float32)
-
-        self.node = mglw.scene.Node(f"{self.id}'s Node", matrix=matrix)
-        self.node.matrix_global = self.get_world_transform()
+        # Create node with local transform
+        self.node = mglw.scene.Node(f"{self.id}'s Node", matrix=self.np_transform)
 
         # Update Scene / State
         if self.parent:
-            parent = self.client.get_delegate(self.parent)
-            parent.node.add_child(self.node)
+            window.add_node(self.node, parent=self.client.get_delegate(self.parent).node)
         else:
-            window.root.add_child(self.node)
+            window.add_node(self.node, parent=None)
 
-        window.scene.nodes.append(self.node)
+    def update_matrices(self, window):
+        """Update global matrices for all nodes in scene"""
+        window.update_matrices()
 
     def on_new(self, message: dict):
 
-        # Reformat transform and keep seperate
+        # Create node - even lights are represented with a node
+        self.client.callback_queue.put((self.set_up_node, []))
+
+        # Reformat transform and keep separate components
         if self.transform:
             # This keeps in col major order for MGLW
             self.np_transform = np.array(self.transform, np.float32).reshape(4, 4)
+
+            # Decompose transform into components - transform, scales, unit quaternion
+            self.decompose_transform()
+            # TODO: test
 
         # Render mesh
         if self.render_rep:
@@ -435,16 +437,21 @@ class EntityDelegate(Entity):
         if "transform" in message or "parent" in message:
             self.np_transform = np.array(self.transform, np.float32).reshape(4, 4)
             self.node.matrix = self.np_transform
-            self.node.matrix_global = self.get_world_transform()
-            self.update_node_transform(self.node)
+            self.client.callback_queue.put((self.update_matrices, []))
 
-        # FIX RENDER REP IN ANY CHILD - figure out way to keep track of children and best way to recurse changes
-        # What changes would get passed down? just transform?
-        # probably need to pass that into the mesh in the node's transform
-        if "render_rep" in message or "transform" in message or "parent" in message:
+            self.decompose_transform()
+            self.changed.reset()
+
+            # Update light positions
+            if self.lights:
+                self.client.callback_queue.put((self.update_lights, []))
+
+        # New mesh on entity
+        if "render_rep" in message:
             self.client.callback_queue.put((self.remove_from_render, []))
             self.client.callback_queue.put((self.render_entity, []))
 
+        # Update lights attached and light positions
         if "lights" in message:
             self.client.callback_queue.put((self.update_lights, []))
 
@@ -541,27 +548,8 @@ class GeometryDelegate(Geometry):
         return info
 
     @staticmethod
-    def construct_format_str(attributes: dict):
-        """Helper to construct format string from Noodle Attribute dict
-        
-        Looking for str like "3f 3f" for interleaved positions and normals
-        """
-
-        formats = []
-        norm_factor = None
-        for attr in attributes:
-            format_info = FORMAT_MAP[attr.format]
-            formats.append(f"{format_info.num_components}{format_info.format}")
-
-            # If texture is present, calculate number to divide by in vertex shader
-            if attr.semantic == "TEXTURE":
-                norm_factor = (2 ** (format_info.size * 8)) - 1
-
-        return " ".join(formats), norm_factor
-
-    @staticmethod
-    def calculate_bounding_box(pos_bytes, instance=False):
-        """Calculate bounding box from bytes
+    def calculate_bounding_sphere(pos_bytes, entity, instance=False):
+        """Calculate axis aligned bounding box from bytes
 
         If we are dealing with instance rendering, assume instances are small and box them all in.
         If dealing with vertices calculate it around the mesh
@@ -569,17 +557,23 @@ class GeometryDelegate(Geometry):
 
         if instance:
             instances = np.frombuffer(pos_bytes, np.float32)
-            instances = instances.reshape(-1, 16)
-            positions = instances[:, :3]
-            min_x, min_y, min_z = np.min(positions, axis=0)
-            max_x, max_y, max_z = np.max(positions, axis=0)
+            instances = instances.reshape(-1, 16)  # Break array into rows of 16 -> each row is an instance
+            points = instances[:, :3]  # Get first three values stored in each instance -> position
         else:
             vertices = np.frombuffer(pos_bytes, np.float32)
-            vertices = vertices.reshape(-1, 3)
-            min_x, min_y, min_z = np.min(vertices, axis=0)
-            max_x, max_y, max_z = np.max(vertices, axis=0)
+            points = vertices.reshape(-1, 3)
 
-        return BoundingBox(min=[min_x, min_y, min_z], max=[max_x, max_y, max_z])
+        # Calculate the center of the bounding sphere
+        center = np.mean(points, axis=0)
+
+        # Calculate the maximum distance from the center to any vertex
+        max_distance = np.max(np.linalg.norm(points - center, axis=1))
+
+        # Translate center to world space
+        world_transform = entity.get_world_transform()
+        center = np.matmul(np.array([*center, 1.0]), world_transform)
+
+        return center[:3], max_distance
 
     def render(self, window, entity):
 
@@ -593,24 +587,27 @@ class GeometryDelegate(Geometry):
 
     def render_patch(self, patch, window, entity):
 
-        def extract_bytes(raw_bytes, offset, length, stride, format):
-            attr_bytes = b''
-            starts = range(offset, offset + length, stride)
-            for start in starts:
-                attr_bytes += raw_bytes[start:start+(format.size * format.num_components)]
-            return attr_bytes
+        def extract_bytes(raw_bytes, attr_offset, length, attr_stride, attr_format):
+            # TODO speed this up
+            attr_specific_bytes = b''
+            if attr_stride == 0:
+                attr_stride = attr_format.size * attr_format.num_components
+            starts = range(attr_offset, attr_offset + length, attr_stride)
+            byte_chunks = [memoryview(raw_bytes)[start:start + (attr_format.size * attr_format.num_components)] for
+                           start in starts]  # Slicing with memoryview is faster
+            return b''.join(byte_chunks)
 
-        def reformat_color(raw_bytes, format):
+        def reformat_color(raw_bytes, color_format):
             # Reformat all colors to consistent u8vec4's
 
-            if format == "U8VEC4":
+            if color_format == "U8VEC4":
                 return raw_bytes
 
-            vals = np.frombuffer(raw_bytes, dtype=NP_FORMAT_MAP[format])
+            vals = np.frombuffer(raw_bytes, dtype=NP_FORMAT_MAP[color_format])
             max_val = np.finfo(np.single).max
             vals *= max_val  # not sure about this
 
-            if format == "VEC3":
+            if color_format == "VEC3":
                 # Pad to 4
                 grouped = vals.reshape((-1, 3))
                 col = np.array([1]*len(grouped))
@@ -621,15 +618,8 @@ class GeometryDelegate(Geometry):
 
         # Extract key attributes
         scene = window.scene
-        transform = entity.np_transform if entity.np_transform is not None else np.eye(4)
+        transform = entity.np_transform
         instances = entity.render_rep.instances
-        if entity.influence:
-            bounding_box = entity.influence
-        elif instances and instances.bb:
-            bounding_box = instances.bb
-            entity.influence = bounding_box
-        else:
-            bounding_box = None
 
         # Initialize VAO to store buffers and indices for this patch
         vao = mglw.opengl.vao.VAO(name=f"{self.name} Patch VAO", mode=MODE_MAP[patch.type])
@@ -675,15 +665,10 @@ class GeometryDelegate(Geometry):
                 buffer_format = "4u1"
 
             # Calculate bounding box if needed for entity without instances
-            if attribute.semantic == "POSITION" and not bounding_box and not instances:
-                bounding_box = self.calculate_bounding_box(attr_bytes)
-                entity.influence = bounding_box
+            if attribute.semantic == "POSITION" and not instances:
+                bounding_sphere = self.calculate_bounding_sphere(attr_bytes, entity)
 
             vao.buffer(attr_bytes, buffer_format, [new_attributes[attribute.semantic]["name"]])
-
-            # Check if there is a texture attribute, and use format size to get normalization factor
-            if attribute.semantic == "TEXTURE":
-                norm_factor = (2 ** (format_info.size * 8)) - 1
 
         # Add default attributes for those that are missing
         if "COLOR" not in new_attributes:
@@ -692,7 +677,7 @@ class GeometryDelegate(Geometry):
             vao.buffer(buffer_data, '4u1', 'in_color')
 
         if "NORMAL" not in new_attributes:
-            default_normal = [0.0, 0.0, 0.0] * patch.vertex_count
+            default_normal = [-1.0, 0.0, 0.0] * patch.vertex_count  # TODO What is a better alternative?
             buffer_data = np.array(default_normal, np.single)
             vao.buffer(buffer_data, '3f', 'in_normal')
 
@@ -700,15 +685,13 @@ class GeometryDelegate(Geometry):
             default_texture_coords = [0.0, 0.0] * patch.vertex_count
             buffer_data = np.array(default_texture_coords, np.single)
             vao.buffer(buffer_data, '2f', 'in_texture')
-            norm_factor = (2 ** (FORMAT_MAP["VEC2"].size * 8)) - 1
 
         # Create Mesh
         mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material.mglw_material, attributes=new_attributes)
-        mesh.norm_factor = norm_factor  # For texture coords
         mesh.geometry_id = self.id
         mesh.entity_id = entity.id  # Can get delegate from mesh in click detection
-        mesh.transform = transform  # Keep track of local transform, mostly for translating bbox in mesh.draw rn
-        entity.node.mesh = mesh  # Add mesh to entity's node, used to delete from scene graph later
+        mesh.ghosting = False  # Ghosting turned off then will be turned on when dragged
+        entity.node.mesh = mesh  # Add mesh to entity's node, used as preview and to delete from scene graph later
 
         # Add instances to vao if applicable, also add appropriate mesh program
         if instances:
@@ -721,10 +704,7 @@ class GeometryDelegate(Geometry):
             mesh.mesh_program = programs.PhongProgram(window, num_instances)
 
             # Set up bounding box for instance rendering
-            if not bounding_box:
-                bounding_box = self.calculate_bounding_box(instance_bytes, instance=True)
-                instances.bb = bounding_box
-                entity.influence = bounding_box
+            bounding_sphere = self.calculate_bounding_sphere(instance_bytes, entity, instance=True)
 
             # Store local instance positions, useful for instance ray checking
             insts = np.frombuffer(instance_bytes, np.single).tolist()
@@ -736,12 +716,14 @@ class GeometryDelegate(Geometry):
             num_instances = 0
             mesh.mesh_program = programs.PhongProgram(window, num_instances=-1)
 
-        # Set bounding box attributes
-        mesh.bbox_min, mesh.bbox_max = np.array(bounding_box.min), np.array(bounding_box.max)
+        # Set bounding sphere attributes - flag for mesh program
+        mesh.bounding_sphere = bounding_sphere
+        mesh.has_bounding_sphere = True
 
         # Add mesh as new node to scene graph, np.array(transform, order='C')
+        mesh_copy = copy.copy(mesh)
         scene.meshes.append(mesh)
-        new_mesh_node = mglw.scene.Node(f"{self.name}'s patch node", mesh=mesh, matrix=transform)
+        new_mesh_node = mglw.scene.Node(f"{self.name}'s patch node", mesh=mesh_copy, matrix=transform)
 
         return new_mesh_node, num_instances
 
@@ -901,7 +883,7 @@ class ImageDelegate(Image):
                 self.bytes = response.read()
 
         im = img.open(io.BytesIO(self.bytes))
-        im = im.transpose(img.FLIP_TOP_BOTTOM)
+        # im = im.transpose(img.FLIP_TOP_BOTTOM)
         self.size = im.size
         self.components = self.component_map[im.mode]
         self.bytes = im.tobytes()
@@ -928,7 +910,9 @@ class TextureDelegate(Texture):
         image = self.client.get_delegate(self.image)
         self.image_delegate = image
         self.mglw_texture = window.ctx.texture(image.size, image.components, image.bytes)
+        window.gui.register_texture(self.mglw_texture)
         self.image_delegate.texture_id = self.mglw_texture.glo
+        # self.image_delegate.texture_id = 2
 
     def on_new(self, message: dict):
 

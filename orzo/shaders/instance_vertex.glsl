@@ -10,13 +10,13 @@ uniform mat4 m_proj;
 uniform mat4 m_model;
 uniform mat4 m_cam;
 uniform vec3 camera_position;
-uniform float normalization_factor;
 
 out vec4 color;
 out vec3 normal;
 out vec3 world_position;
 out vec2 texcoord;
 out vec3 view_vector;
+out float instance_id;
 
 
 vec3 quat_transform(vec4 q, vec3 v){
@@ -39,7 +39,8 @@ void main() {
     normal = normalize(normal_matrix * quat_transform(q, in_normal));
     color = in_color * instance_matrix[1];
     world_position = (m_model * local_position).xyz;
-    texcoord = in_texture / normalization_factor;
+    texcoord = in_texture;
     view_vector = camera_position - world_position;
+    instance_id = float(gl_InstanceID);
 
 }

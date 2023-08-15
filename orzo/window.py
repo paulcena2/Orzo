@@ -1,11 +1,10 @@
-import queue
 import logging
 import os
 
 import moderngl_window as mglw
 import moderngl
 import numpy as np
-from pyrr import Quaternion
+import quaternion
 from pathlib import Path
 import imgui
 from imgui.integrations.pyglet import create_renderer
@@ -18,10 +17,21 @@ from orzo import programs
 
 current_dir = os.path.dirname(__file__)
 
+# Rendering radius
 SKYBOX_RADIUS = 1000.0
 
+# Shader
 DEFAULT_SHININESS = 10.0
 DEFAULT_SPEC_STRENGTH = 0.2
+
+# Widgets
+WIDGET_SCALE = [0.1, 0.1, 0.1, 1.0]
+X_WIDGET_COLOR = [1.0, 0.0, 0.0, 1.0]
+Y_WIDGET_COLOR = [0.0, 1.0, 0.0, 1.0]
+Z_WIDGET_COLOR = [0.0, 0.0, 1.0, 1.0]
+X_WIDGET_ROTATION = [0.7071, 0.7071, 0.0, 0]
+Y_WIDGET_ROTATION = [0.0, 0.0, 0.0, 1.0]
+Z_WIDGET_ROTATION = [0.7071, 0.0, 0.0, -0.7071]
 
 SPECIFIER_MAP = {
     penne.MethodID: "Methods",
@@ -48,6 +58,26 @@ def get_char(cls, number):
     return None  # Return None if the number is not found in the mapping
 
 
+def get_scale(mat):
+    """Get x, y, and z scale from a matrix"""
+    return np.array([np.linalg.norm(mat[0, :3]), np.linalg.norm(mat[1, :3]), np.linalg.norm(mat[2, :3])])
+
+
+def get_rotation(mat, x, y, z):
+    """Get rotation quaternion from a matrix given the scales"""
+    mat[0, :3] /= x
+    mat[1, :3] /= y
+    mat[2, :3] /= z
+    quat = quaternion.from_rotation_matrix(mat)
+    quat = quaternion.as_float_array(quat)
+    quat[0], quat[1], quat[2], quat[3] = quat[1], quat[2], quat[3], quat[0]
+    return quat
+
+
+def get_translation(mat):
+    return mat[3, :3]
+
+
 def get_distance_to_mesh(camera_pos, mesh):
     """Get the distance from the camera to the mesh"""
     mesh_position = mesh.node.matrix_global[3, :3]
@@ -59,48 +89,6 @@ def normalize_device_coordinates(x, y, width, height):
     x = (2.0 * x) / width - 1.0
     y = 1.0 - (2.0 * y) / height
     return x, y
-
-
-def distances_point_to_ray(points, ray_origin, ray_direction):
-    """Compute distance from point to a ray in 3d space
-
-    Useful for checking distance from instance to ray when clicking
-    """
-
-    distances = []
-    for point in points:
-        vec_to_point = point[:3] - ray_origin
-        parallel_component = np.dot(vec_to_point, ray_direction)
-        closest_point = ray_origin + parallel_component * ray_direction
-        distances.append(np.linalg.norm(closest_point - point[:3]))
-    return distances
-
-
-def intersection(ray_direction, ray_origin, bbox_min, bbox_max, instance_positions=None):
-    """Ray-BoundingBox intersection test"""
-    t_near = float('-inf')
-    t_far = float('inf')
-
-    for i in range(3):
-        if ray_direction[i] == 0:
-            if ray_origin[i] < bbox_min[i] or ray_origin[i] > bbox_max[i]:
-                return False
-        else:
-            t1 = (bbox_min[i] - ray_origin[i]) / ray_direction[i]
-            t2 = (bbox_max[i] - ray_origin[i]) / ray_direction[i]
-            t_near = max(t_near, min(t1, t2))
-            t_far = min(t_far, max(t1, t2))
-
-    # if there is an intersection, return the distance
-    if t_near <= t_far:
-
-        if instance_positions is not None:
-            dists = distances_point_to_ray(instance_positions, ray_origin, ray_direction)
-            return np.min(dists), t_near
-        else:
-            return 0, t_near
-
-    return False
 
 
 class Window(mglw.WindowConfig):
@@ -126,12 +114,12 @@ class Window(mglw.WindowConfig):
         self.camera = mglw.scene.camera.KeyboardCamera(self.wnd.keys, aspect_ratio=self.wnd.aspect_ratio)
         self.camera.projection.update(near=0.1, far=1000.0)  # Range where camera will cutoff
         self.camera.mouse_sensitivity = 0.1
-        self.camera.velocity = 2.0
+        self.camera.velocity = 3.0
         self.camera.zoom = 2.5
         self.camera_position = [0.0, 0.0, 0.0]
 
         # Set up Framebuffer - used for selection
-        self.fbo = self.ctx.simple_framebuffer((self.wnd.width, self.wnd.height), dtype='f4')
+        self.framebuffer = self.ctx.simple_framebuffer((self.wnd.width, self.wnd.height), dtype='u4')
 
         # Window Options
         self.wnd.mouse_exclusivity = True
@@ -139,11 +127,12 @@ class Window(mglw.WindowConfig):
 
         # Store Light Info
         self.lights = {}  # light_id: light_info
-        # self.default_lighting = False
+        self.default_lighting = True
 
         # Create scene and set up basic nodes
         self.scene = mglw.scene.Scene("Noodles Scene")
         self.root = mglw.scene.Node("Root")
+        self.root.matrix = np.identity(4, np.float32)
         self.root.matrix_global = np.identity(4, np.float32)
         self.scene.root_nodes.append(self.root)
         self.scene.cameras.append(self.camera)
@@ -157,18 +146,66 @@ class Window(mglw.WindowConfig):
         # self.gui = create_renderer(self.wnd._window)
         self.gui = ModernglWindowRenderer(self.wnd)
         self.args = {}
-        self.selection = None  # Current entity that is selected
-        self.last_click = None  # (x, y) of last click
+        self.selected_entity = None  # Current entity that is selected
+        self.selected_instance = None  # Number instance that is selected
         self.rotating = False  # Flag for rotating entity on drag
+        self.active_widget = None  # String for active widget type
+        self.widgets_align_local = 1  # Whether widgets should be axis aligned or local
+        self.translate_widgets = True  # Flags for enabling and disabling widgets
+        self.rotate_widgets = True
+        self.scale_widgets = True
+        self.origin_centered = 0  # Where transforms like rotations should be centered
 
-        # Flag for rendering bounding boxes on mesh, can be toggled in GUI
-        self.draw_bboxes = True
+        # Flag for rendering bounding spheres on mesh, can be toggled in GUI
+        self.draw_bs = False
 
         # Set up skybox
         self.skybox_on = True
         self.skybox = mglw.geometry.sphere(radius=SKYBOX_RADIUS)
         self.skybox_program = self.load_program(os.path.join(current_dir, "shaders/sky.glsl"))
         self.skybox_texture = self.load_texture_2d("skybox.png", flip_y=False)
+
+    def update_matrices(self):
+        """Update global matrices for all nodes in the scene"""
+        self.root.calc_model_mat(np.identity(4))
+
+    def add_node(self, node, parent=None):
+        """Add a node to the scene
+
+        Adds to root by default, otherwise adds to parent node
+        """
+        self.scene.nodes.append(node)
+
+        # Keep track of mesh
+        if node.mesh is not None:
+            self.scene.meshes.append(node.mesh)
+
+        # Attach to parent node
+        if parent is None:
+            self.root.add_child(node)
+        else:
+            parent.add_child(node)
+
+        # update global matrices
+        self.update_matrices()
+
+    def remove_node(self, node, parent=None):
+        """Remove a node from the scene"""
+        self.scene.nodes.remove(node)
+
+        # Keep track of mesh
+        if node.mesh is not None:
+            self.scene.meshes.remove(node.mesh)
+
+        # Take care of parent connection
+        if parent is None:
+            self.root.children.remove(node)
+        else:
+            parent.children.remove(node)
+
+        # Recurse on children
+        for child in node.children:
+            self.remove_node(child, parent=node)
 
     def get_ray_from_click(self, x, y, world=True):
 
@@ -183,7 +220,7 @@ class Window(mglw.WindowConfig):
 
         # Make vectors for click and release locations
         if world:  # use distance to mesh as part of ray length
-            distance = get_distance_to_mesh(self.camera_position, self.selection)  # This is a rough estimate -> error down the road
+            distance = get_distance_to_mesh(self.camera_position, self.selected_entity)  # This is a rough estimate -> error down the road
             ray_clip = np.array([x, y, -1.0, distance], dtype=np.float32)
 
             # Reverse perspective division
@@ -224,16 +261,13 @@ class Window(mglw.WindowConfig):
         click_vec = self.get_ray_from_click(x_last, y_last, world=False)
         release_vec = self.get_ray_from_click(x, y, world=False)
 
-        # Get axis of rotation with cross product
+        # Get axis of rotation and angle
         axis = np.cross(click_vec, release_vec)
-        # axis = np.cross(release_vec, click_vec)
-
-        # Get angle of rotation with dot product
-        # angle = np.arccos(np.dot(release_vec, click_vec))
+        axis /= np.sqrt(np.dot(axis, axis))
         angle = .05
 
-        # Create quaternion
-        return Quaternion.from_axis_rotation(axis, angle)
+        # Construct quaternion from axis vector, length is proportional to angle in radians
+        return quaternion.from_rotation_vector(axis * angle)
 
     def key_event(self, key, action, modifiers):
 
@@ -262,6 +296,7 @@ class Window(mglw.WindowConfig):
             uni_char = get_char(self.wnd.keys, key)
             self.unicode_char_entered(uni_char.lower())
 
+        # Rotation modifier
         if key == keys.R:
             if action == keys.ACTION_PRESS:
                 self.rotating = True
@@ -292,23 +327,53 @@ class Window(mglw.WindowConfig):
         if imgui.is_window_hovered(imgui.HOVERED_ANY_WINDOW):
             return
 
-        # Get info from framebuffer and click coordinates
+        # Get info from framebuffer and click coordinates, cast to ints
         pixel_data = self.render_scene_to_framebuffer(x, y)
-        slot, gen, instance, hit = pixel_data[:4], pixel_data[4:8], pixel_data[8:], pixel_data[12:]
+        slot, gen, instance, hit = pixel_data[:4], pixel_data[4:8], pixel_data[8:12], pixel_data[12:]
+        slot = int(np.frombuffer(slot, dtype=np.single))  # Why are these floats? I'm not sure but it works
+        gen = int(np.frombuffer(gen, dtype=np.single))
+        instance = int(np.frombuffer(instance, dtype=np.single))
+        hit = int(np.frombuffer(hit, dtype=np.single))
 
         # No hit -> No selection
-        if int.from_bytes(hit, byteorder='little') == 0:
-            self.selection = None
+        if hit == 0:
+            if self.selected_entity is not None:
+                self.active_widget = None
+                self.remove_widgets()
+            self.selected_entity = None
+            self.selected_instance = None
             return
 
+        # Get widget type from hit
+        if hit == 2:
+            self.active_widget = "translation"
+        elif hit == 3:
+            self.active_widget = "rotation"
+        elif hit == 4:
+            self.active_widget = "scaling"
+        else:
+            self.active_widget = None
+
         # We hit something! -> Get selection from slot and gen in buffer
-        slot, gen = int(np.frombuffer(slot, dtype=np.single)), int(np.frombuffer(gen, dtype=np.single))
         entity_id = penne.EntityID(slot=slot, gen=gen)
-        logging.info(f"Clicked Entity: {entity_id}")
-        self.selection = self.client.get_delegate(entity_id)
+        clicked_entity = self.client.get_delegate(entity_id)
+        logging.info(f"Clicked: {clicked_entity}, Instance: {instance}")
+        self.selected_instance = instance
+        if clicked_entity is not self.selected_entity:
+            if self.selected_entity is not None:
+                self.remove_widgets()
+            self.selected_entity = self.client.get_delegate(entity_id)
+            self.add_widgets()
+
+        print(f"Active Widget: {self.active_widget}")
 
     def mouse_drag_event(self, x: int, y: int, dx: int, dy: int):
-        """Change appearance by changing the mesh's transform"""
+        """Change appearance by changing the mesh's transform
+
+        Essentially, the drag is changing the global matrix of the selected entity's node.
+        This global matrix isn't really correct, given the local transforms, but it allows the
+        preview to render temporarily.
+        """
 
         # Log for debugging events
         print(f"Mouse Drag: {x}, {y}, {dx}, {dy}")
@@ -316,33 +381,43 @@ class Window(mglw.WindowConfig):
         # Pass event to gui
         self.gui.mouse_drag_event(x, y, dx, dy)
 
-        if not self.selection or imgui.is_window_hovered(imgui.HOVERED_ANY_WINDOW):
+        if not self.selected_entity or imgui.is_window_hovered(imgui.HOVERED_ANY_WINDOW) or (dx == 0 and dy == 0):
             return
 
         x_last, y_last = x - dx, y - dy
-        current_mat = self.selection.node.matrix
+        entity = self.selected_entity
 
-        if dx == 0 and dy == 0:
-            return
+        # Turn on ghosting effect
+        entity.node.mesh.ghosting = True
+
+        # If widgeting, move using the widget's rules
+        if self.active_widget is not None:
+            dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
+            self.handle_widget_movement(dx, dy, dz)
 
         # If r is held, rotate, if not translate
-        if self.rotating:
-            quat = self.get_world_rotation(x, y, x_last, y_last)
-            pos = current_mat[3, :3]  # This seems like a hack, but gets rid of the translation component
-            new_mat = np.matmul(current_mat, quat.matrix44)
-            new_mat[3, :3] = pos
-            self.selection.node.matrix = new_mat
-            self.selection.node.matrix_global = new_mat
-            self.selection.node.mesh.transform = new_mat
-            # self.selection.node.children[0].matrix_global = new_mat  # Can turn off preview
-            # Transorm is in node matrix, matrix global, children -> patch's node transform, mesh transform
-            # There is a mesh in the child node for the patch and also a mesh at the entity level -> double version
+        elif self.rotating:
+            center, radius = self.selected_entity.node.mesh.bounding_sphere
+
+            rotation_quat = self.get_world_rotation(x, y, x_last, y_last)
+
+            # Add translation to keep things centered
+            shifted_origin = entity.translation - center
+            inverse_rotation = np.quaternion(rotation_quat.w, -rotation_quat.x, -rotation_quat.y, -rotation_quat.z)
+            rotated = quaternion.rotate_vectors(inverse_rotation, shifted_origin)
+            entity.translation = rotated + center
+            entity.changed.translation = True
+
+            # Add the rotation to the current matrix
+            entity.rotation = entity.rotation * rotation_quat
+            entity.changed.rotation = True
+            entity.node.matrix_global = entity.compose_transform()
+
         else:
             dx, dy, dz = self.get_world_translations(x, y, x_last, y_last)
-            translation_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [dx, dy, dz, 1]])
-            self.selection.node.matrix = np.matmul(current_mat, translation_mat)
-            self.selection.node.matrix_global = self.selection.node.matrix
-            self.selection.node.mesh.transform = self.selection.node.matrix
+            entity.translation += np.array([dx, dy, dz])
+            entity.changed.translation = True
+            entity.node.matrix_global = entity.compose_transform()
 
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
@@ -353,25 +428,44 @@ class Window(mglw.WindowConfig):
         # Pass event to gui
         self.gui.mouse_release_event(x, y, button)
 
+        # If nothing is selected move on
+        if self.selected_entity is None:
+            return
+
         # Calculate vectors and move if applicable
-        if self.selection and self.last_click != (x, y):
+        entity = self.selected_entity
+        preview = entity.node.matrix_global
+        old = entity.node.children[0].matrix_global
+        if not np.array_equal(preview, old):
 
             try:
-                preview = self.selection.node.matrix_global
-                old = self.selection.node.children[0].matrix_global
 
-                # Rotation
-                if not np.array_equal(preview[:3, :3], old[:3, :3]):
-                    quat = Quaternion.from_matrix(self.selection.node.matrix_global)
-                    self.selection.set_rotation(quat.xyzw.tolist())
+                if entity.changed.translation:
+                    entity.set_position(entity.translation.tolist())
 
-                # Position
-                if not np.array_equal(preview[3, :3], old[3, :3]):
-                    x, y, z = self.selection.node.matrix_global[3, :3].astype(float)
-                    self.selection.set_position([x, y, z])
+                if entity.changed.rotation:
+                    rearranged = [entity.rotation.x, entity.rotation.y, entity.rotation.z, entity.rotation.w]
+                    entity.set_rotation(rearranged)
 
+                if entity.changed.scale:
+                    entity.set_scale(entity.scale.tolist())
+
+                plain_translation = not entity.changed.rotation and not entity.changed.scale
+                rotate_around_origin = entity.changed.rotation and self.origin_centered
+                local_rotation = entity.changed.rotation and self.widgets_align_local
+                if plain_translation or rotate_around_origin or local_rotation:
+                    self.update_widgets(old, preview)
+
+                entity.changed.reset()
+
+            # Server doesn't support these injected methods
             except AttributeError as e:
-                logging.warning(f"Dragging {self.selection} failed: {e}")
+                logging.warning(f"Dragging {self.selected_entity} failed: {e}")
+                self.selected_entity.node.matrix = self.selected_entity.node.children[0].matrix
+                self.selected_entity.node.matrix_global = old
+
+            # Turn off ghosting effect
+            self.selected_entity.node.mesh.ghosting = False
 
     def resize(self, width: int, height: int):
         self.gui.resize(width, height)
@@ -393,18 +487,216 @@ class Window(mglw.WindowConfig):
         # modifiers = mglw.context.base.keys.KeyModifiers()
         # self.key_event(key_num, 'ACTION_PRESS', modifiers)
 
+    def create_widget_node(self, mesh, radius, offset):
+
+        name = mesh[:-4]
+        widget_mesh = self.load_scene(mesh).meshes[0]
+        widget_mesh.mesh_program = programs.PhongProgram(self, 3)
+        widget_mesh.name = f"noo::widget_{name}"
+        widget_mesh.norm_factor = (2 ** 32) - 1
+        widget_mesh.entity_id = self.selected_entity.id
+        widget_mesh.ghosting = False
+        widget_mesh.has_bounding_sphere = False
+        vao = widget_mesh.vao
+
+        # Add default colors
+        default_colors = [1.0, 1.0, 1.0, 1.0] * vao.vertex_count
+        buffer_data = np.array(default_colors, np.int8)
+        vao.buffer(buffer_data, '4u1', 'in_color')
+
+        # Add default textures
+        default_texture_coords = [0.0, 0.0] * vao.vertex_count
+        buffer_data = np.array(default_texture_coords, np.single)
+        vao.buffer(buffer_data, '2f', 'in_texture')
+
+        # Add instances -> position, color, rotation, scale
+        # Instance trio is centered at origin and spaced out by radius
+        instances = np.array([[[radius + offset, 0, 0, 1], X_WIDGET_COLOR, X_WIDGET_ROTATION, WIDGET_SCALE],
+                              [[0, radius + offset, 0, 1], Y_WIDGET_COLOR, Y_WIDGET_ROTATION, WIDGET_SCALE],
+                              [[0, 0, radius + offset, 1], Z_WIDGET_COLOR, Z_WIDGET_ROTATION, WIDGET_SCALE]],
+                             np.float32)
+        instances[:, 3, :3] *= radius  # Scale widget by radius
+        vao.buffer(instances, '16f/i', 'instance_matrix')
+
+        # Create the node
+        widget_node = mglw.scene.Node(f"{name} widget", mesh=widget_mesh, matrix=np.identity(4))
+        return widget_node
+
+    def add_widgets(self):
+        """Renders x, y, and z handle widgets for moving entities
+
+        Create nodes for translation, rotation, and scaling widgets where each has 3 instances
+        Then a parent node will store all the widgets. This parent node stores the translation
+        that essentially does all the work to get things to line up with the entity
+        """
+
+        # Get entity info
+        entity = self.selected_entity
+        center, radius = entity.node.mesh.bounding_sphere
+
+        # Create the parent node
+        if self.widgets_align_local:
+            mat = entity.compose_transform(scale=np.array([1.0, 1.0, 1.0]))  # Get global without scaling
+        else:
+            mat = np.identity(4, np.float32)
+        mat[3, :3] = center
+        widget_node = mglw.scene.Node("Widgets", matrix=mat)
+        self.add_node(widget_node)
+
+        # Create mesh nodes
+        meshes, offsets = [], []
+        if self.translate_widgets:
+            meshes.append("cone.obj")
+            offsets.append(.5 * radius)
+        if self.rotate_widgets:
+            meshes.append("torus.obj")
+            offsets.append(0)
+        if self.scale_widgets:
+            meshes.append("tab.obj")
+            offsets.append(0)
+        for mesh, offset in zip(meshes, offsets):
+            node = self.create_widget_node(mesh, radius, offset)
+            self.add_node(node, parent=widget_node)
+
+    def update_widgets(self, old_global, new_global):
+        """Update widgets when the entity is moved
+
+        Depending on the widget mode, the widgets will be moved in different ways
+        In global mode, the widgets will always remain axis aligned, but in local mode
+        the widgets will rotate with the entity.
+        """
+
+        # Update bounding sphere in mesh
+        entity = self.selected_entity
+        selected_mesh = entity.node.mesh
+        old_center, old_radius = selected_mesh.bounding_sphere
+
+        # Homogenize
+        old_center = np.array([old_center[0], old_center[1], old_center[2], 1])
+
+        # Transform center back to local space
+        old_center_local = np.matmul(old_center, np.linalg.inv(old_global))
+
+        # Transform back to world space with new transform
+        new_center = np.matmul(old_center_local, new_global)
+        new_center = new_center[:3]
+        selected_mesh.bounding_sphere = (new_center, old_radius)
+
+        # Update the widget transforms
+        if self.widgets_align_local:
+            new_mat = entity.compose_transform(scale=np.array([1.0, 1.0, 1.0]))  # Get global without scaling
+            new_mat[3, :3] = new_center
+            self.scene.find_node("Widgets").matrix = new_mat
+        else:
+            new_mat = np.identity(4)
+            new_mat[3, :3] = new_center
+            self.scene.find_node("Widgets").matrix = new_mat
+        self.update_matrices()
+
+    def remove_widgets(self):
+
+        # Remove widgets from scene
+        widget_node = self.scene.find_node("Widgets")
+        self.remove_node(widget_node)
+
+    def handle_widget_movement(self, dx, dy, dz):
+
+        # Essentially a switch to guide drag to the proper handling
+        widget_type = self.active_widget
+        if widget_type == "translation":
+            self.handle_widget_translation(dx, dy, dz)
+        elif widget_type == "rotation":
+            self.handle_widget_rotation(dx, dy, dz)
+        elif widget_type == "scaling":
+            self.handle_widget_scaling(dx, dy, dz)
+        else:
+            return
+
+    def handle_widget_translation(self, dx, dy, dz):
+
+        entity = self.selected_entity
+        direction = self.selected_instance
+        deltas = np.array([dx, dy, dz])
+
+        # Translate in direction of widget
+        if not self.widgets_align_local:
+            entity.translation[direction] += deltas[direction]
+        else:
+            widget_direction = entity.node.matrix_global[direction, :3]
+            magnitude = np.dot(deltas, widget_direction)
+            entity.translation += widget_direction * magnitude
+
+        # Add the translation to the current matrix
+        entity.changed.translation = True
+        entity.node.matrix_global = entity.compose_transform()
+
+    def handle_widget_rotation(self, dx, dy, dz):
+        """Rotate along the specified widget axis"""
+        entity = self.selected_entity
+        direction = self.selected_instance
+        center, radius = entity.node.mesh.bounding_sphere
+        widgets = self.scene.find_node("Widgets")
+
+        # Get the rotation quaternion
+        widget_vec = widgets.children[direction].matrix_global[direction, :3]
+        vec = np.dot(widget_vec, np.array([dx, dy, dz])) * widget_vec
+        rotation_quat = quaternion.from_rotation_vector(vec)
+
+        # Apply Rotation
+        entity.rotation = entity.rotation * rotation_quat
+        entity.changed.rotation = True
+
+        if not self.origin_centered:
+            # Rotate around the center of the mesh - to pivot, then rotate, then go back to see new origin position
+            to_pivot, from_pivot, rotation_mat = np.identity(4), np.identity(4), np.identity(4)
+            to_pivot[3, :3] = -center
+            from_pivot[3, :3] = center
+            rotation_mat[:3, :3] = quaternion.as_rotation_matrix(rotation_quat)
+            rotation_mat = np.matmul(to_pivot, np.matmul(rotation_mat, from_pivot))
+            entity.translation = np.matmul(np.array([entity.translation[0], entity.translation[1], entity.translation[2], 1]), rotation_mat)[:3]
+            entity.changed.translation = True
+
+        entity.node.matrix_global = entity.compose_transform()
+
+    def handle_widget_scaling(self, dx, dy, dz):
+        """Scale along the specified widget axis"""
+        entity = self.selected_entity
+        current_mat_global = entity.node.matrix_global
+        direction = self.selected_instance
+        center, radius = entity.node.mesh.bounding_sphere
+        deltas = np.array([dx, dy, dz])
+        origin = current_mat_global[:3, 3]
+        widgets = self.scene.find_node("Widgets")
+
+        # Scale in direction of widget
+        widget_vec = widgets.children[direction].matrix_global[direction, :3]
+        magnitude = np.dot(deltas, widget_vec)
+        rotated_scale = quaternion.rotate_vectors(entity.rotation, widget_vec)
+        entity.scale += rotated_scale * magnitude
+
+        # Translate to keep things centered
+        if np.dot(rotated_scale, widget_vec) < 0:
+            entity.translation += widget_vec * magnitude * (radius / 2) * (center - origin)
+        else:
+            entity.translation -= widget_vec * magnitude * (radius / 2) * (center - origin)
+        entity.changed.translation = True
+
+        # Add the scaling to the current matrix
+        entity.changed.scale = True
+        entity.node.matrix_global = entity.compose_transform()
+
     def render_scene_to_framebuffer(self, x, y):
 
         # Clear the framebuffer to max value 32 bit int
-        self.fbo.clear()
+        self.framebuffer.clear()
 
         # Swap mesh programs to the frame select program
         old_programs = {}
         for mesh in self.scene.meshes:
-            old_programs[mesh.entity_id] = mesh.mesh_program  # Save the old program
+            old_programs[(mesh.entity_id, mesh.name)] = mesh.mesh_program  # Save the old program
             mesh.mesh_program = programs.FrameSelectProgram(self, mesh.mesh_program.num_instances)
 
-        self.fbo.use()
+        self.framebuffer.use()
         self.scene.draw(
             projection_matrix=self.camera.projection.matrix,
             camera_matrix=self.camera.matrix
@@ -412,9 +704,14 @@ class Window(mglw.WindowConfig):
 
         # Swap back to the old programs
         for mesh in self.scene.meshes:
-            mesh.mesh_program = old_programs[mesh.entity_id]
+            mesh.mesh_program = old_programs[(mesh.entity_id, mesh.name)]
 
-        return self.fbo.read(components=4, viewport=(x, self.wnd.height-y, 1, 1), dtype='f4')
+        # Show pillow image for debugging
+        # img = Image.frombytes('RGBA', (self.wnd.width, self.wnd.height), self.framebuffer.read(components=4))
+        # img = img.transpose(Image.FLIP_TOP_BOTTOM)
+        # img.show()
+
+        return self.framebuffer.read(components=4, viewport=(x, self.wnd.height-y, 1, 1), dtype='u4')
 
     def render(self, time: float, frametime: float):
         """Renders a frame to on the window
@@ -425,8 +722,7 @@ class Window(mglw.WindowConfig):
         Note: each callback has the window as the first arg
         """
 
-        self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE)  # was raising problem in IDE but seemed to work
-        # self.ctx.enable_only(moderngl.CULL_FACE)
+        self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE | moderngl.BLEND)  # was raising problem in IDE but seemed to work
 
         # Render skybox
         if self.skybox_on:
@@ -448,14 +744,11 @@ class Window(mglw.WindowConfig):
         imgui.render()
         self.gui.render(imgui.get_draw_data())
 
-        try:
-            callback_info = Window.client.callback_queue.get(block=False)
+        while not self.client.callback_queue.empty():
+            callback_info = self.client.callback_queue.get()
             callback, args = callback_info
             logging.info(f"Callback in render: {callback.__name__} \n\tw/ args: {args}")
             callback(self, *args)
-
-        except queue.Empty:
-            pass
 
     def render_document(self):
         imgui.begin("Document")
@@ -505,7 +798,7 @@ class Window(mglw.WindowConfig):
             if imgui.begin_menu("Settings", True):
 
                 # Bboxes
-                clicked, self.draw_bboxes = imgui.checkbox("Show Bounding Boxes", self.draw_bboxes)
+                clicked, self.draw_bs = imgui.checkbox("Show Bounding Spheres", self.draw_bs)
 
                 # Skybox
                 clicked, self.skybox_on = imgui.checkbox("Use Skybox", self.skybox_on)
@@ -533,6 +826,35 @@ class Window(mglw.WindowConfig):
                 if changed:
                     self.spec_strength = spec
 
+                # Lighting Settings
+                imgui.menu_item("Lighting Settings", None, False, True)
+                changed, self.default_lighting = imgui.checkbox("Default Lighting", self.default_lighting)
+
+                # Widget Settings
+                imgui.menu_item("Widget Settings", None, False, True)
+
+                # Toggle which are active
+                changed_t, self.translate_widgets = imgui.checkbox("Movement Widgets", self.translate_widgets)
+                changed_r, self.rotate_widgets = imgui.checkbox("Rotation Widgets", self.rotate_widgets)
+                changed_s, self.scale_widgets = imgui.checkbox("Scaling Widgets", self.scale_widgets)
+                if changed_t or changed_r or changed_s:
+                    self.remove_widgets()
+                    self.add_widgets()
+
+                # Toggle alignment
+                clicked, self.widgets_align_local = imgui.combo(
+                    "Widget Alignment", self.widgets_align_local, ["Global", "Local"]
+                )
+                if clicked and self.selected_entity:
+                    preview = self.selected_entity.node.matrix_global
+                    old = self.selected_entity.node.children[0].matrix_global
+                    self.update_widgets(old, preview)
+
+                # Toggle origin
+                clicked, self.origin_centered = imgui.combo(
+                    "Transformation Origin", self.origin_centered, ["Center of Mesh", "Object Origin"]
+                )
+
                 imgui.end_menu()
             imgui.end_main_menu_bar()
 
@@ -542,13 +864,14 @@ class Window(mglw.WindowConfig):
         imgui.text(f"Press 'Space' to toggle camera/GUI")
         imgui.text(f"Click and drag an entity to move it")
         imgui.text(f"Hold 'r' while dragging to rotate an entity")
-        _, self.draw_bboxes = imgui.checkbox("Show Bounding Boxes", self.draw_bboxes)
+        _, self.draw_bs = imgui.checkbox("Show Bounding Spheres", self.draw_bs)
         imgui.end()
 
         # Render Document Methods and Signals or selection
-        if self.selection is None:
+        if self.selected_entity is None:
             self.render_document()
         else:
             imgui.begin("Selection")
-            self.selection.gui_rep()
+            self.selected_entity.gui_rep()
+            imgui.text(f"Instance: {self.selected_instance}")
             imgui.end()
