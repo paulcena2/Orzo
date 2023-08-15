@@ -119,7 +119,7 @@ class Window(mglw.WindowConfig):
         self.camera_position = [0.0, 0.0, 0.0]
 
         # Set up Framebuffer - used for selection
-        self.fbo = self.ctx.simple_framebuffer((self.wnd.width, self.wnd.height), dtype='u4')
+        self.framebuffer = self.ctx.simple_framebuffer((self.wnd.width, self.wnd.height), dtype='u4')
 
         # Window Options
         self.wnd.mouse_exclusivity = True
@@ -688,7 +688,7 @@ class Window(mglw.WindowConfig):
     def render_scene_to_framebuffer(self, x, y):
 
         # Clear the framebuffer to max value 32 bit int
-        self.fbo.clear()
+        self.framebuffer.clear()
 
         # Swap mesh programs to the frame select program
         old_programs = {}
@@ -696,7 +696,7 @@ class Window(mglw.WindowConfig):
             old_programs[(mesh.entity_id, mesh.name)] = mesh.mesh_program  # Save the old program
             mesh.mesh_program = programs.FrameSelectProgram(self, mesh.mesh_program.num_instances)
 
-        self.fbo.use()
+        self.framebuffer.use()
         self.scene.draw(
             projection_matrix=self.camera.projection.matrix,
             camera_matrix=self.camera.matrix
@@ -707,11 +707,11 @@ class Window(mglw.WindowConfig):
             mesh.mesh_program = old_programs[(mesh.entity_id, mesh.name)]
 
         # Show pillow image for debugging
-        # img = Image.frombytes('RGBA', (self.wnd.width, self.wnd.height), self.fbo.read(components=4))
+        # img = Image.frombytes('RGBA', (self.wnd.width, self.wnd.height), self.framebuffer.read(components=4))
         # img = img.transpose(Image.FLIP_TOP_BOTTOM)
         # img.show()
 
-        return self.fbo.read(components=4, viewport=(x, self.wnd.height-y, 1, 1), dtype='u4')
+        return self.framebuffer.read(components=4, viewport=(x, self.wnd.height-y, 1, 1), dtype='u4')
 
     def render(self, time: float, frametime: float):
         """Renders a frame to on the window

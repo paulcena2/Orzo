@@ -9,7 +9,6 @@ uniform mat4 m_proj;
 uniform mat4 m_model;
 uniform mat4 m_cam;
 uniform vec3 camera_position;
-uniform float normalization_factor;
 
 out vec4 color;
 out vec3 normal;
@@ -29,8 +28,8 @@ void main() {
     world_position = (m_model * local_position).xyz;
     view_vector = camera_position - world_position;
 
-    //Normalize coordinates -> (0, 1)
-    texcoord = in_texture / normalization_factor;
+    // Used to normalize coordinates -> (0, 1) but has since been removed
+    texcoord = in_texture;
 
     instance_id = 0.0;
 }

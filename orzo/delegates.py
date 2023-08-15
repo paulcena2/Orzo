@@ -548,25 +548,6 @@ class GeometryDelegate(Geometry):
         return info
 
     @staticmethod
-    def construct_format_str(attributes: dict):
-        """Helper to construct format string from Noodle Attribute dict
-        
-        Looking for str like "3f 3f" for interleaved positions and normals
-        """
-
-        formats = []
-        norm_factor = None
-        for attr in attributes:
-            format_info = FORMAT_MAP[attr.format]
-            formats.append(f"{format_info.num_components}{format_info.format}")
-
-            # If texture is present, calculate number to divide by in vertex shader
-            if attr.semantic == "TEXTURE":
-                norm_factor = (2 ** (format_info.size * 8)) - 1
-
-        return " ".join(formats), norm_factor
-
-    @staticmethod
     def calculate_bounding_sphere(pos_bytes, entity, instance=False):
         """Calculate axis aligned bounding box from bytes
 
@@ -607,6 +588,7 @@ class GeometryDelegate(Geometry):
     def render_patch(self, patch, window, entity):
 
         def extract_bytes(raw_bytes, attr_offset, length, attr_stride, attr_format):
+            # TODO speed this up
             attr_specific_bytes = b''
             if attr_stride == 0:
                 attr_stride = attr_format.size * attr_format.num_components
@@ -688,10 +670,6 @@ class GeometryDelegate(Geometry):
 
             vao.buffer(attr_bytes, buffer_format, [new_attributes[attribute.semantic]["name"]])
 
-            # Check if there is a texture attribute, and use format size to get normalization factor
-            if attribute.semantic == "TEXTURE":
-                norm_factor = (2 ** (format_info.size * 8)) - 1
-
         # Add default attributes for those that are missing
         if "COLOR" not in new_attributes:
             default_colors = [1.0, 1.0, 1.0, 1.0] * patch.vertex_count
@@ -699,7 +677,7 @@ class GeometryDelegate(Geometry):
             vao.buffer(buffer_data, '4u1', 'in_color')
 
         if "NORMAL" not in new_attributes:
-            default_normal = [0.0, 0.0, 0.0] * patch.vertex_count
+            default_normal = [-1.0, 0.0, 0.0] * patch.vertex_count  # TODO What is a better alternative?
             buffer_data = np.array(default_normal, np.single)
             vao.buffer(buffer_data, '3f', 'in_normal')
 
@@ -707,11 +685,9 @@ class GeometryDelegate(Geometry):
             default_texture_coords = [0.0, 0.0] * patch.vertex_count
             buffer_data = np.array(default_texture_coords, np.single)
             vao.buffer(buffer_data, '2f', 'in_texture')
-            norm_factor = (2 ** (FORMAT_MAP["VEC2"].size * 8)) - 1
 
         # Create Mesh
         mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material.mglw_material, attributes=new_attributes)
-        mesh.norm_factor = norm_factor  # For texture coords
         mesh.geometry_id = self.id
         mesh.entity_id = entity.id  # Can get delegate from mesh in click detection
         mesh.ghosting = False  # Ghosting turned off then will be turned on when dragged
@@ -907,7 +883,7 @@ class ImageDelegate(Image):
                 self.bytes = response.read()
 
         im = img.open(io.BytesIO(self.bytes))
-        im = im.transpose(img.FLIP_TOP_BOTTOM)
+        # im = im.transpose(img.FLIP_TOP_BOTTOM)
         self.size = im.size
         self.components = self.component_map[im.mode]
         self.bytes = im.tobytes()
@@ -934,7 +910,9 @@ class TextureDelegate(Texture):
         image = self.client.get_delegate(self.image)
         self.image_delegate = image
         self.mglw_texture = window.ctx.texture(image.size, image.components, image.bytes)
+        window.gui.register_texture(self.mglw_texture)
         self.image_delegate.texture_id = self.mglw_texture.glo
+        # self.image_delegate.texture_id = 2
 
     def on_new(self, message: dict):
 

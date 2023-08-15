@@ -60,7 +60,6 @@ class PhongProgram(MeshProgram):
         self.program["m_proj"].write(projection_matrix)
         self.program["m_model"].write(model_matrix)
         self.program["m_cam"].write(camera_matrix)
-        self.program["normalization_factor"].value = mesh.norm_factor
         self.program["shininess"].value = self.window.shininess
         self.program["spec_strength"].value = self.window.spec_strength
         self.program["ghosting"].value = mesh.ghosting
