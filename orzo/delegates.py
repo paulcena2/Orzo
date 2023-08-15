@@ -593,9 +593,9 @@ class GeometryDelegate(Geometry):
             if attr_stride == 0:
                 attr_stride = attr_format.size * attr_format.num_components
             starts = range(attr_offset, attr_offset + length, attr_stride)
-            for start in starts:
-                attr_specific_bytes += raw_bytes[start:start + (attr_format.size * attr_format.num_components)]
-            return attr_specific_bytes
+            byte_chunks = [memoryview(raw_bytes)[start:start + (attr_format.size * attr_format.num_components)] for
+                           start in starts]  # Slicing with memoryview is faster
+            return b''.join(byte_chunks)
 
         def reformat_color(raw_bytes, color_format):
             # Reformat all colors to consistent u8vec4's
