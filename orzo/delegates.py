@@ -588,13 +588,11 @@ class GeometryDelegate(Geometry):
     def render_patch(self, patch, window, entity):
 
         def extract_bytes(raw_bytes, attr_offset, length, attr_stride, attr_format):
-            # TODO speed this up
-            attr_specific_bytes = b''
             if attr_stride == 0:
                 attr_stride = attr_format.size * attr_format.num_components
             starts = range(attr_offset, attr_offset + length, attr_stride)
             byte_chunks = [memoryview(raw_bytes)[start:start + (attr_format.size * attr_format.num_components)] for
-                           start in starts]  # Slicing with memoryview is faster
+                           start in starts]  # Slicing with memory view is much much faster
             return b''.join(byte_chunks)
 
         def reformat_color(raw_bytes, color_format):
