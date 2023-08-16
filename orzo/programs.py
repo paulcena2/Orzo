@@ -5,7 +5,7 @@ import moderngl
 import pyrr.matrix44 as m44
 
 from moderngl_window.scene import MeshProgram
-from moderngl_window.geometry import bbox
+from moderngl_window.geometry import sphere
 from PIL import Image
 
 current_dir = os.path.dirname(__file__)
@@ -25,7 +25,7 @@ class PhongProgram(MeshProgram):
         self.num_instances = num_instances
 
         # Bounding box shader if used
-        self.bbox_program = wnd.load_program(os.path.join(current_dir, "shaders/bbox.glsl"))
+        self.bs_program = wnd.load_program(os.path.join(current_dir, "shaders/bounding_sphere.glsl"))
 
         # Vertex Shader
         if num_instances == -1:
@@ -66,10 +66,18 @@ class PhongProgram(MeshProgram):
 
         # Draw bounding box if enabled
         if self.window.draw_bs and mesh.has_bounding_sphere:
-            # mesh.draw_bbox(projection_matrix, model_matrix, camera_matrix, self.bbox_program, bbox())
-            # Get rid of model matrix and rely on recalculating bbox to world space
-            # mesh.draw_bbox(projection_matrix, np.identity(4, dtype='f4'), camera_matrix, self.bbox_program, bbox())
-            pass  # TODO: Transition to bounding spheres
+            center, radius = mesh.bounding_sphere
+
+            # Set up matrix to shift bounding sphere to center
+            shifted_model_matrix = np.identity(4, dtype='f4')
+            shifted_model_matrix[3, :3] = center
+            self.bs_program["m_proj"].write(projection_matrix)
+            self.bs_program["m_model"].write(shifted_model_matrix)
+            self.bs_program["m_cam"].write(camera_matrix)
+
+            # Make the VAO and render
+            bs_vao = sphere(radius)
+            bs_vao.render(self.bs_program, mode=moderngl.LINES)
 
         # Add highlight effect if there is a selection, everything not selected gets a little dull
         selection = self.window.selected_entity

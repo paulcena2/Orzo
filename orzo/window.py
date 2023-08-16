@@ -157,7 +157,7 @@ class Window(mglw.WindowConfig):
         self.origin_centered = 0  # Where transforms like rotations should be centered
 
         # Flag for rendering bounding spheres on mesh, can be toggled in GUI
-        self.draw_bs = False
+        self.draw_bs = True
 
         # Set up skybox
         self.skybox_on = True
@@ -276,7 +276,6 @@ class Window(mglw.WindowConfig):
 
         # Pass event to gui
         self.gui.key_event(key, action, modifiers)
-        # action = "ACTION_PRESS"  # This function only registers key_releases for all_new
 
         # Move camera if enabled
         keys = self.wnd.keys
@@ -284,17 +283,13 @@ class Window(mglw.WindowConfig):
             self.camera.key_input(key, action, modifiers)
 
         # Handle key presses like quit and toggle camera
-        if action == keys.ACTION_PRESS:  # it looks like this is broken for later versions of pyglet
+        if action == keys.ACTION_PRESS:
             if key == keys.C or key == keys.SPACE:
                 self.camera_enabled = not self.camera_enabled
                 self.wnd.mouse_exclusivity = self.camera_enabled
                 self.wnd.cursor = not self.camera_enabled
             if key == keys.P:
                 self.timer.toggle_pause()
-
-            # Workaround: try passing it to unicode char after for pyglet==2.0.7
-            uni_char = get_char(self.wnd.keys, key)
-            self.unicode_char_entered(uni_char.lower())
 
         # Rotation modifier
         if key == keys.R:
@@ -305,9 +300,6 @@ class Window(mglw.WindowConfig):
 
     def mouse_position_event(self, x: int, y: int, dx, dy):
 
-        # Log for debugging events
-        # print(f"Mouse Position: {x}, {y}, {dx}, {dy}")
-
         # Pass event to gui
         self.gui.mouse_position_event(x, y, dx, dy)
 
@@ -316,9 +308,6 @@ class Window(mglw.WindowConfig):
             self.camera.rot_state(-dx, -dy)
 
     def mouse_press_event(self, x: int, y: int, button: int):
-
-        # Log for debugging events
-        print(f"Mouse Press: {x}, {y}, {button}")
 
         # Pass event to gui
         self.gui.mouse_press_event(x, y, button)
@@ -375,9 +364,6 @@ class Window(mglw.WindowConfig):
         preview to render temporarily.
         """
 
-        # Log for debugging events
-        print(f"Mouse Drag: {x}, {y}, {dx}, {dy}")
-
         # Pass event to gui
         self.gui.mouse_drag_event(x, y, dx, dy)
 
@@ -421,9 +407,6 @@ class Window(mglw.WindowConfig):
 
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
-
-        # Log for debugging events
-        print(f"Mouse Release: {x}, {y}, {button}")
 
         # Pass event to gui
         self.gui.mouse_release_event(x, y, button)
@@ -473,19 +456,8 @@ class Window(mglw.WindowConfig):
 
     def unicode_char_entered(self, char):
 
-        # Log for debugging events
-        print(f"Unicode char entered: {char}")
-
         # Pass event to gui
         self.gui.unicode_char_entered(char)
-
-        # For current versions of dependencies, key presses are not being registered and handled
-        # As a workaround, we can send unicode_char_entered to the keypress event handler
-        # Having this problem with mglw==2.4.4, pyglet==2.0.8, imgui==2.0.0
-        # upper_char = char.upper()
-        # key_num = self.wnd.keys[upper_char]
-        # modifiers = mglw.context.base.keys.KeyModifiers()
-        # self.key_event(key_num, 'ACTION_PRESS', modifiers)
 
     def create_widget_node(self, mesh, radius, offset):
 
@@ -554,6 +526,7 @@ class Window(mglw.WindowConfig):
         if self.scale_widgets:
             meshes.append("tab.obj")
             offsets.append(0)
+
         for mesh, offset in zip(meshes, offsets):
             node = self.create_widget_node(mesh, radius, offset)
             self.add_node(node, parent=widget_node)
@@ -581,6 +554,8 @@ class Window(mglw.WindowConfig):
         new_center = np.matmul(old_center_local, new_global)
         new_center = new_center[:3]
         selected_mesh.bounding_sphere = (new_center, old_radius)
+        for child in entity.node.children:
+            child.mesh.bounding_sphere = (new_center, old_radius)
 
         # Update the widget transforms
         if self.widgets_align_local:
