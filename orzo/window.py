@@ -157,7 +157,7 @@ class Window(mglw.WindowConfig):
         self.origin_centered = 0  # Where transforms like rotations should be centered
 
         # Flag for rendering bounding spheres on mesh, can be toggled in GUI
-        self.draw_bs = False
+        self.draw_bs = True
 
         # Set up skybox
         self.skybox_on = True
@@ -526,6 +526,7 @@ class Window(mglw.WindowConfig):
         if self.scale_widgets:
             meshes.append("tab.obj")
             offsets.append(0)
+
         for mesh, offset in zip(meshes, offsets):
             node = self.create_widget_node(mesh, radius, offset)
             self.add_node(node, parent=widget_node)
@@ -553,6 +554,8 @@ class Window(mglw.WindowConfig):
         new_center = np.matmul(old_center_local, new_global)
         new_center = new_center[:3]
         selected_mesh.bounding_sphere = (new_center, old_radius)
+        for child in entity.node.children:
+            child.mesh.bounding_sphere = (new_center, old_radius)
 
         # Update the widget transforms
         if self.widgets_align_local:

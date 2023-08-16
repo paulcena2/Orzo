@@ -539,7 +539,8 @@ class GeometryDelegate(Geometry):
         """Calculate bounding sphere for a mesh
 
         If we are dealing with instance rendering, assume instances are small and box them all in.
-        If dealing with vertices calculate it around the mesh
+        If dealing with vertices calculate it around the mesh. Center is more like a center of mass
+        as opposed to a geometric center.
         """
 
         if instance_positions is not None:
@@ -701,9 +702,9 @@ class GeometryDelegate(Geometry):
             num_instances = int(instance_buffer.size / 64)  # 16 4 byte floats per instance
             mesh.mesh_program = programs.PhongProgram(window, num_instances)
 
-            # Store local instance positions, useful for instance ray checking
-            insts = np.frombuffer(instance_bytes, np.single)
-            positions = insts.reshape((num_instances, 4, 4))[:, :3, 3]
+            # Extract positions from instance buffer, used for calculating bounding sphere
+            insts = np.frombuffer(instance_bytes, np.single).reshape((num_instances, 4, 4))
+            positions = insts[:, 0, :3]
 
         else:
             positions = None
