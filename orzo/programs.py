@@ -223,7 +223,8 @@ class FrameSelectProgram(MeshProgram):
         if hasattr(mesh.material, "double_sided") and mesh.material.double_sided:
             mesh.vao.ctx.disable(moderngl.CULL_FACE)
         else:
-            self.ctx.enable(moderngl.CULL_FACE | moderngl.DEPTH_TEST)
+            mesh.vao.ctx.enable(moderngl.CULL_FACE)
+        mesh.vao.ctx.enable(moderngl.DEPTH_TEST)
 
         num_instances = 1 if self.num_instances == -1 else self.num_instances
         mesh.vao.render(self.program, instances=num_instances)
