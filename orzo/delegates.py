@@ -289,7 +289,6 @@ class EntityDelegate(Entity):
     signal_delegates: Optional[list[SignalDelegate]] = None
     table_delegate: Optional[TableDelegate] = None
     num_instances: Optional[int] = 0
-    instance_positions: Optional[np.ndarray] = None
     np_transform: Optional[np.ndarray] = np.eye(4)
 
     # These correspond to current state -> preview
@@ -413,7 +412,6 @@ class EntityDelegate(Entity):
 
             # Decompose transform into components - transform, scales, unit quaternion
             self.decompose_transform()
-            # TODO: test
 
         # Render mesh
         if self.render_rep:
@@ -537,31 +535,17 @@ class PlotDelegate(Plot):
 class GeometryDelegate(Geometry):
 
     @staticmethod
-    def reformat_attr(attr: Attribute):
-        """Reformat noodle attributes to modernGL attribute format"""
-
-        info = {
-            "name": f"in_{attr.semantic.lower()}",
-            "components": FORMAT_MAP[attr.format].num_components
-            # "type": ?
-        }
-        return info
-
-    @staticmethod
-    def calculate_bounding_sphere(pos_bytes, entity, instance=False):
-        """Calculate axis aligned bounding box from bytes
+    def calculate_bounding_sphere(vertices, instance_positions, entity):
+        """Calculate bounding sphere for a mesh
 
         If we are dealing with instance rendering, assume instances are small and box them all in.
         If dealing with vertices calculate it around the mesh
         """
 
-        if instance:
-            instances = np.frombuffer(pos_bytes, np.float32)
-            instances = instances.reshape(-1, 16)  # Break array into rows of 16 -> each row is an instance
-            points = instances[:, :3]  # Get first three values stored in each instance -> position
+        if instance_positions is not None:
+            points = instance_positions
         else:
-            vertices = np.frombuffer(pos_bytes, np.float32)
-            points = vertices.reshape(-1, 3)
+            points = vertices
 
         # Calculate the center of the bounding sphere
         center = np.mean(points, axis=0)
@@ -575,6 +559,159 @@ class GeometryDelegate(Geometry):
 
         return center[:3], max_distance
 
+    @staticmethod
+    def calculate_normals(vertices, indices):
+        """Calculate Normals for a Mesh that doesn't have them
+
+        Modeled off of three.js approach here: https://github.com/mrdoob/three.js/blob/dev/src/core/BufferGeometry.js
+        """
+        normals = np.zeros(vertices.shape, dtype=np.single)
+        for triangle in indices:
+            v0 = vertices[triangle[0]]
+            v1 = vertices[triangle[1]]
+            v2 = vertices[triangle[2]]
+            normal = np.cross(v2 - v1, v0 - v1)
+            normals[triangle[0]] += normal
+            normals[triangle[1]] += normal
+            normals[triangle[2]] += normal
+
+        # normalize normals
+        return normals / np.linalg.norm(normals, axis=1)[:, np.newaxis]
+
+    @staticmethod
+    def extract_bytes(raw_bytes, attr_offset, length, attr_stride, attr_format):
+        if attr_stride == 0:
+            attr_stride = attr_format.size * attr_format.num_components
+        starts = range(attr_offset, attr_offset + length, attr_stride)
+        byte_chunks = [memoryview(raw_bytes)[start:start + (attr_format.size * attr_format.num_components)] for
+                       start in starts]  # Slicing with memory view is much, much faster
+        return b''.join(byte_chunks)
+
+    @staticmethod
+    def reformat_color(raw_bytes, color_format):
+        """Reformat all colors to consistent u8vec4's"""
+
+        if color_format == "U8VEC4":
+            return raw_bytes
+
+        vals = np.frombuffer(raw_bytes, dtype=NP_FORMAT_MAP[color_format])
+        max_val = np.finfo(np.single).max
+        vals *= max_val  # not sure about this
+
+        if color_format == "VEC3":
+            # Pad to 4
+            grouped = vals.reshape((-1, 3))
+            col = np.array([1] * len(grouped))
+            vals = np.append(grouped, col, axis=1)
+
+        reformatted = vals.astype(np.int8).tobytes()
+        return reformatted
+
+    def set_up_indices(self, patch, vao):
+        """Create index buffer for mesh
+
+        Also returns the indices as a numpy array
+        """
+        index = patch.indices
+        if index:
+            index_view = self.client.get_delegate(index.view)
+            index_format = FORMAT_MAP[index.format]
+            index_size = index_format.size
+            stride = index_view.stride if index.stride != 0 else index_size * index_format.num_components
+            offset = index_view.offset + index.offset
+            index_bytes = GeometryDelegate.extract_bytes(index_view.buffer_delegate.bytes, offset, index_view.length,
+                                                         stride, index_format)
+            indices = np.frombuffer(index_bytes, dtype=NP_FORMAT_MAP[index.format])
+        else:
+            # Non-indexed primitives just use range - 0, 1, 2, 3, etc...
+            indices = np.arange(patch.vertex_count, dtype=np.single)
+            index_bytes = indices.tobytes()
+            index_size = 4  # four bytes / 32 bits for np.single
+
+        # Create the buffer and store it in the VAO
+        vao.index_buffer(index_bytes, index_size)
+        return indices.reshape((-1, 3))
+
+    def set_up_attributes(self, patch, mesh, indices):
+        """Take care of setting up attributes for a mesh
+
+        Breaks buffer into separate VAOs for each attribute
+        """
+        vertices = None
+
+        # Break buffer up into VAO by attribute for robustness
+        attribute_semantics = set([attr.semantic for attr in patch.attributes])
+        for attribute in patch.attributes:
+            view: BufferViewDelegate = self.client.get_delegate(attribute.view)
+            buffer_bytes = view.buffer_delegate.bytes
+
+            # Get format info
+            format_info = FORMAT_MAP[attribute.format]
+            buffer_format = f"{format_info.num_components}{format_info.format}"
+
+            # Extract bytes and create buffer for attr
+            attr_bytes = GeometryDelegate.extract_bytes(buffer_bytes, attribute.offset, view.length,
+                                                        attribute.stride, format_info)
+
+            # Reformat colors to consistent u8vec4's
+            if attribute.semantic == "COLOR":
+                attr_bytes = GeometryDelegate.reformat_color(attr_bytes, attribute.format)
+                buffer_format = "4u1"
+
+            # Calculate normals if they are missing
+            if attribute.semantic == "POSITION":
+                vertices = np.frombuffer(attr_bytes, np.float32).reshape((-1, 3))
+                if "NORMAL" not in attribute_semantics:
+                    normals = GeometryDelegate.calculate_normals(vertices, indices).flatten()
+                    mesh.vao.buffer(normals, '3f', 'in_normal')
+                    mesh.add_attribute("NORMAL", "in_normal", 3)
+
+            attribute_name = f"in_{attribute.semantic.lower()}"  # What is passed into the shader
+            mesh.vao.buffer(attr_bytes, buffer_format, attribute_name)
+            mesh.add_attribute(attribute.semantic, attribute_name, format_info.num_components)
+            # Add attribute doesn't let you specify type for some reason, i'm not sure if type is used somewhere
+            # couldn't find it in docs / src. Another option would be to construct a dict and set mesh.attributes
+            # manually.
+
+        # Add default attributes for those that are missing
+        if "COLOR" not in attribute_semantics:
+            default_colors = [1.0, 1.0, 1.0, 1.0] * patch.vertex_count
+            buffer_data = np.array(default_colors, np.int8)
+            mesh.vao.buffer(buffer_data, '4u1', 'in_color')
+            mesh.add_attribute("COLOR", "in_color", 4)  # Could check changing this to 1
+
+        if "TEXTURE" not in attribute_semantics:
+            default_texture_coords = [0.0, 0.0] * patch.vertex_count
+            buffer_data = np.array(default_texture_coords, np.single)
+            mesh.vao.buffer(buffer_data, '2f', 'in_texture')
+            mesh.add_attribute("TEXTURE", "in_texture", 2)
+
+        return vertices
+
+    def set_up_instances(self, instances, mesh, window):
+        """Set up instance buffer, program depends on whether there is instancing"""
+
+        # Add instances to vao if applicable, also add appropriate mesh program
+        if instances:
+            instance_view = self.client.get_delegate(instances.view)
+            instance_buffer = instance_view.buffer_delegate
+            instance_bytes = instance_buffer.bytes
+            mesh.vao.buffer(instance_bytes, '16f/i', 'instance_matrix')
+
+            num_instances = int(instance_buffer.size / 64)  # 16 4 byte floats per instance
+            mesh.mesh_program = programs.PhongProgram(window, num_instances)
+
+            # Store local instance positions, useful for instance ray checking
+            insts = np.frombuffer(instance_bytes, np.single)
+            positions = insts.reshape((num_instances, 4, 4))[:, :3, 3]
+
+        else:
+            positions = None
+            num_instances = 0
+            mesh.mesh_program = programs.PhongProgram(window, num_instances=-1)
+
+        return positions, num_instances
+
     def render(self, window, entity):
 
         # Render each patch using the instances
@@ -586,33 +723,6 @@ class GeometryDelegate(Geometry):
         return nodes, num_instances
 
     def render_patch(self, patch, window, entity):
-
-        def extract_bytes(raw_bytes, attr_offset, length, attr_stride, attr_format):
-            if attr_stride == 0:
-                attr_stride = attr_format.size * attr_format.num_components
-            starts = range(attr_offset, attr_offset + length, attr_stride)
-            byte_chunks = [memoryview(raw_bytes)[start:start + (attr_format.size * attr_format.num_components)] for
-                           start in starts]  # Slicing with memory view is much much faster
-            return b''.join(byte_chunks)
-
-        def reformat_color(raw_bytes, color_format):
-            # Reformat all colors to consistent u8vec4's
-
-            if color_format == "U8VEC4":
-                return raw_bytes
-
-            vals = np.frombuffer(raw_bytes, dtype=NP_FORMAT_MAP[color_format])
-            max_val = np.finfo(np.single).max
-            vals *= max_val  # not sure about this
-
-            if color_format == "VEC3":
-                # Pad to 4
-                grouped = vals.reshape((-1, 3))
-                col = np.array([1]*len(grouped))
-                vals = np.append(grouped, col, axis=1)
-
-            reformatted = vals.astype(np.int8).tobytes()
-            return reformatted
 
         # Extract key attributes
         scene = window.scene
@@ -626,102 +736,26 @@ class GeometryDelegate(Geometry):
         material = self.client.get_delegate(patch.material)
         scene.materials.append(material.mglw_material)
 
-        # Reformat attributes
-        noodle_attributes = patch.attributes
-        new_attributes = {attr.semantic: GeometryDelegate.reformat_attr(attr) for attr in noodle_attributes}
-
-        # Get Index Bytes and Size to use later in vao
-        if patch.indices:
-            index = patch.indices
-            index_view = self.client.get_delegate(index.view)
-            format = FORMAT_MAP[index.format]
-            index_size = format.size
-            stride = index_view.stride if index.stride != 0 else index_size * format.num_components
-            offset = index_view.offset + index.offset
-            index_bytes = extract_bytes(index_view.buffer_delegate.bytes, offset, index_view.length, stride, format)
-        else:
-            # Non-indexed primitives just use range - 0, 1, 2, 3, etc...
-            index_bytes = np.arange(patch.vertex_count, dtype=np.single).tobytes()
-            index_size = 4  # four bytes / 32 bits for np.single
-        vao.index_buffer(index_bytes, index_size)
-
-        # Break buffer up into VAO by attribute for robustness
-        for attribute in patch.attributes:
-            view: BufferViewDelegate = self.client.get_delegate(attribute.view)
-            buffer_bytes = view.buffer_delegate.bytes
-
-            # Get format info
-            format_info = FORMAT_MAP[attribute.format]
-            buffer_format = f"{format_info.num_components}{format_info.format}"
-
-            # Extract bytes and create buffer for attr
-            attr_bytes = extract_bytes(buffer_bytes, attribute.offset, view.length, attribute.stride, format_info)
-
-            # Reformat colors to consistent u8vec4's
-            if attribute.semantic == "COLOR":
-                attr_bytes = reformat_color(attr_bytes, attribute.format)
-                buffer_format = "4u1"
-
-            # Calculate bounding box if needed for entity without instances
-            if attribute.semantic == "POSITION" and not instances:
-                bounding_sphere = self.calculate_bounding_sphere(attr_bytes, entity)
-
-            vao.buffer(attr_bytes, buffer_format, [new_attributes[attribute.semantic]["name"]])
-
-        # Add default attributes for those that are missing
-        if "COLOR" not in new_attributes:
-            default_colors = [1.0, 1.0, 1.0, 1.0] * patch.vertex_count
-            buffer_data = np.array(default_colors, np.int8)
-            vao.buffer(buffer_data, '4u1', 'in_color')
-
-        if "NORMAL" not in new_attributes:
-            default_normal = [-1.0, 0.0, 0.0] * patch.vertex_count  # TODO What is a better alternative?
-            buffer_data = np.array(default_normal, np.single)
-            vao.buffer(buffer_data, '3f', 'in_normal')
-
-        if "TEXTURE" not in new_attributes:
-            default_texture_coords = [0.0, 0.0] * patch.vertex_count
-            buffer_data = np.array(default_texture_coords, np.single)
-            vao.buffer(buffer_data, '2f', 'in_texture')
-
-        # Create Mesh
-        mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material.mglw_material, attributes=new_attributes)
+        # Create the mesh object
+        mesh = mglw.scene.Mesh(f"{self.name} Mesh", vao=vao, material=material.mglw_material)
         mesh.geometry_id = self.id
         mesh.entity_id = entity.id  # Can get delegate from mesh in click detection
         mesh.ghosting = False  # Ghosting turned off then will be turned on when dragged
         entity.node.mesh = mesh  # Add mesh to entity's node, used as preview and to delete from scene graph later
 
-        # Add instances to vao if applicable, also add appropriate mesh program
-        if instances:
-            instance_view = self.client.get_delegate(instances.view)
-            instance_buffer = instance_view.buffer_delegate
-            instance_bytes = instance_buffer.bytes
-            vao.buffer(instance_bytes, '16f/i', 'instance_matrix')
+        # Create buffers for indices, attributes, and instances
+        indices = self.set_up_indices(patch, mesh.vao)
+        vertices = self.set_up_attributes(patch, mesh, indices)
+        instance_positions, num_instances = self.set_up_instances(instances, mesh, window)
 
-            num_instances = int(instance_buffer.size / 64)  # 16 4 byte floats per instance
-            mesh.mesh_program = programs.PhongProgram(window, num_instances)
-
-            # Set up bounding box for instance rendering
-            bounding_sphere = self.calculate_bounding_sphere(instance_bytes, entity, instance=True)
-
-            # Store local instance positions, useful for instance ray checking
-            insts = np.frombuffer(instance_bytes, np.single).tolist()
-            positions = [insts[i:i+3] for i in range(0, len(insts), 16)]
-            entity.instance_positions = np.array(positions)
-            entity.instance_positions = np.pad(entity.instance_positions, ((0, 0), (0, 1)), constant_values=1)
-
-        else:
-            num_instances = 0
-            mesh.mesh_program = programs.PhongProgram(window, num_instances=-1)
-
-        # Set bounding sphere attributes - flag for mesh program
-        mesh.bounding_sphere = bounding_sphere
+        # Calculate normals and bounding sphere if needed
+        mesh.bounding_sphere = GeometryDelegate.calculate_bounding_sphere(vertices, instance_positions, entity)
         mesh.has_bounding_sphere = True
 
-        # Add mesh as new node to scene graph, np.array(transform, order='C')
+        # Add mesh as new node to scene graph
         mesh_copy = copy.copy(mesh)
         scene.meshes.append(mesh)
-        new_mesh_node = mglw.scene.Node(f"{self.name}'s patch node", mesh=mesh_copy, matrix=transform)
+        new_mesh_node = mglw.scene.Node(f"{entity.name}'s Mesh Preview", mesh=mesh_copy, matrix=transform)
 
         return new_mesh_node, num_instances
 
