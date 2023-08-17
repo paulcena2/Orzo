@@ -10,7 +10,6 @@ import imgui
 from imgui.integrations.pyglet import create_renderer
 from moderngl_window.integrations.imgui import ModernglWindowRenderer
 import penne
-from PIL import Image
 
 from orzo import programs
 
@@ -157,7 +156,7 @@ class Window(mglw.WindowConfig):
         self.origin_centered = 0  # Where transforms like rotations should be centered
 
         # Flag for rendering bounding spheres on mesh, can be toggled in GUI
-        self.draw_bs = True
+        self.draw_bs = False
 
         # Set up skybox
         self.skybox_on = True
@@ -427,6 +426,7 @@ class Window(mglw.WindowConfig):
                     entity.set_position(entity.translation.tolist())
 
                 if entity.changed.rotation:
+                    # Revisit - Platter has negative w component
                     rearranged = [entity.rotation.x, entity.rotation.y, entity.rotation.z, entity.rotation.w]
                     entity.set_rotation(rearranged)
 
@@ -650,10 +650,7 @@ class Window(mglw.WindowConfig):
         entity.scale += rotated_scale * magnitude
 
         # Translate to keep things centered
-        if np.dot(rotated_scale, widget_vec) < 0:
-            entity.translation += widget_vec * magnitude * (radius / 2) * (center - origin)
-        else:
-            entity.translation -= widget_vec * magnitude * (radius / 2) * (center - origin)
+        entity.translation -= widget_vec * magnitude * (radius / 2) * (center - origin)
         entity.changed.translation = True
 
         # Add the scaling to the current matrix
@@ -681,11 +678,6 @@ class Window(mglw.WindowConfig):
         for mesh in self.scene.meshes:
             mesh.mesh_program = old_programs[(mesh.entity_id, mesh.name)]
 
-        # Show pillow image for debugging
-        # img = Image.frombytes('RGBA', (self.wnd.width, self.wnd.height), self.framebuffer.read(components=4))
-        # img = img.transpose(Image.FLIP_TOP_BOTTOM)
-        # img.show()
-
         return self.framebuffer.read(components=4, viewport=(x, self.wnd.height-y, 1, 1), dtype='u4')
 
     def render(self, time: float, frametime: float):
@@ -697,7 +689,7 @@ class Window(mglw.WindowConfig):
         Note: each callback has the window as the first arg
         """
 
-        self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE | moderngl.BLEND)  # was raising problem in IDE but seemed to work
+        self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE | moderngl.BLEND)
 
         # Render skybox
         if self.skybox_on:
@@ -812,7 +804,7 @@ class Window(mglw.WindowConfig):
                 changed_t, self.translate_widgets = imgui.checkbox("Movement Widgets", self.translate_widgets)
                 changed_r, self.rotate_widgets = imgui.checkbox("Rotation Widgets", self.rotate_widgets)
                 changed_s, self.scale_widgets = imgui.checkbox("Scaling Widgets", self.scale_widgets)
-                if changed_t or changed_r or changed_s:
+                if self.active_widget is not None and (changed_t or changed_r or changed_s):
                     self.remove_widgets()
                     self.add_widgets()
 
