@@ -309,6 +309,7 @@ class Window(mglw.WindowConfig):
     def mouse_press_event(self, x: int, y: int, button: int):
 
         # Pass event to gui
+        print("Click Registered")
         self.gui.mouse_press_event(x, y, button)
 
         # If the mouse is over a window, don't do anything
@@ -364,6 +365,7 @@ class Window(mglw.WindowConfig):
         """
 
         # Pass event to gui
+        print("Drag Registered")
         self.gui.mouse_drag_event(x, y, dx, dy)
 
         if not self.selected_entity or imgui.is_window_hovered(imgui.HOVERED_ANY_WINDOW) or (dx == 0 and dy == 0):
@@ -408,6 +410,7 @@ class Window(mglw.WindowConfig):
         """On release, officially send request to move the object"""
 
         # Pass event to gui
+        print("Click Release Registered")
         self.gui.mouse_release_event(x, y, button)
 
         # If nothing is selected move on
