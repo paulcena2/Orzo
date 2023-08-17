@@ -156,7 +156,7 @@ class Window(mglw.WindowConfig):
         self.origin_centered = 0  # Where transforms like rotations should be centered
 
         # Flag for rendering bounding spheres on mesh, can be toggled in GUI
-        self.draw_bs = True
+        self.draw_bs = False
 
         # Set up skybox
         self.skybox_on = True
@@ -426,6 +426,7 @@ class Window(mglw.WindowConfig):
                     entity.set_position(entity.translation.tolist())
 
                 if entity.changed.rotation:
+                    # Revisit - Platter has negative w component
                     rearranged = [entity.rotation.x, entity.rotation.y, entity.rotation.z, entity.rotation.w]
                     entity.set_rotation(rearranged)
 
@@ -649,10 +650,7 @@ class Window(mglw.WindowConfig):
         entity.scale += rotated_scale * magnitude
 
         # Translate to keep things centered
-        if np.dot(rotated_scale, widget_vec) < 0:
-            entity.translation += widget_vec * magnitude * (radius / 2) * (center - origin)
-        else:
-            entity.translation -= widget_vec * magnitude * (radius / 2) * (center - origin)
+        entity.translation -= widget_vec * magnitude * (radius / 2) * (center - origin)
         entity.changed.translation = True
 
         # Add the scaling to the current matrix
