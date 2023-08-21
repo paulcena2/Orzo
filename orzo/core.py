@@ -6,8 +6,13 @@ from .delegates import delegate_map
 from .window import Window
 
 
-def run(address="ws://localhost:50000", default_lighting=True, on_connected=None):
-    """Runs the Orzo Client
+def run():
+    """Opens Orzo allows user to connect with a GUI"""
+    Window.run()
+
+
+def connect(address="ws://localhost:50000", default_lighting=True, on_connected=None):
+    """Connects the Orzo Client to a websocket address
 
     Connects to address and opens a window to display the scene. The window will run
     indefinitely until it is closed. If window is black with just the gui displayed,
