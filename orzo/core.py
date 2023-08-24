@@ -6,14 +6,18 @@ from .delegates import delegate_map
 from .window import Window
 
 
-def run(address="ws://localhost:50000", default_lighting=True, on_connected=None):
-    """Runs the Orzo Client
+def run():
+    """Opens Orzo allows user to connect with a GUI"""
+    Window.run()
+
+
+def connect(address="ws://localhost:50000", default_lighting=True, on_connected=None):
+    """Connects the Orzo Client to a websocket address
 
     Connects to address and opens a window to display the scene. The window will run
-    indefinitely until it is closed. If window is black with just the gui displayed,
-    it is possible that the server does not have any lights in the scene. The default
-    lighting parameter is set to True by default, and helps avoid this situation, but
-    it can be turned off if desired.
+    indefinitely until it is closed. The default lighting parameter is set to True by default to
+    avoid loading an all black scene initially. The default lighting can also be toggled later
+    in the GUI.
 
     Args:
         address (str): Address of the server to connect to

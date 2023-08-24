@@ -11,7 +11,7 @@ logging.basicConfig(
 
 
 def main():
-    orzo.run("ws://localhost:50000")
+    orzo.run()
 
 
 if __name__ == "__main__":

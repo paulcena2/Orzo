@@ -1,5 +1,6 @@
 import logging
 import os
+from time import time
 
 import moderngl_window as mglw
 import moderngl
@@ -12,6 +13,7 @@ from moderngl_window.integrations.imgui import ModernglWindowRenderer
 import penne
 
 from orzo import programs
+from orzo.delegates import delegate_map
 
 
 current_dir = os.path.dirname(__file__)
@@ -50,33 +52,6 @@ SPECIFIER_MAP = {
 }
 
 
-def get_char(cls, number):
-    for attr_name, attr_value in cls.__dict__.items():
-        if attr_value == number:
-            return attr_name[-1]
-    return None  # Return None if the number is not found in the mapping
-
-
-def get_scale(mat):
-    """Get x, y, and z scale from a matrix"""
-    return np.array([np.linalg.norm(mat[0, :3]), np.linalg.norm(mat[1, :3]), np.linalg.norm(mat[2, :3])])
-
-
-def get_rotation(mat, x, y, z):
-    """Get rotation quaternion from a matrix given the scales"""
-    mat[0, :3] /= x
-    mat[1, :3] /= y
-    mat[2, :3] /= z
-    quat = quaternion.from_rotation_matrix(mat)
-    quat = quaternion.as_float_array(quat)
-    quat[0], quat[1], quat[2], quat[3] = quat[1], quat[2], quat[3], quat[0]
-    return quat
-
-
-def get_translation(mat):
-    return mat[3, :3]
-
-
 def get_distance_to_mesh(camera_pos, mesh):
     """Get the distance from the camera to the mesh"""
     mesh_position = mesh.node.matrix_global[3, :3]
@@ -103,11 +78,11 @@ class Window(mglw.WindowConfig):
     resizable = True
     client = None
 
-    # vsync=True
-    # MATCH SCREEN RATE
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
+        # Set up garbage collection
+        self.ctx.gc_mode = 'context_gc'
 
         # Set Up Camera
         self.camera = mglw.scene.camera.KeyboardCamera(self.wnd.keys, aspect_ratio=self.wnd.aspect_ratio)
@@ -140,16 +115,21 @@ class Window(mglw.WindowConfig):
         self.shininess = DEFAULT_SHININESS
         self.spec_strength = DEFAULT_SPEC_STRENGTH
 
+        # Tried using imgui pyglet integration before, but switched to moderngl_window's integration
+        # Could be worth taking another look at if event input problems are persistent
+        # self.gui = create_renderer(self.wnd._window)
+
         # Set up GUI
         imgui.create_context()
-        # self.gui = create_renderer(self.wnd._window)
         self.gui = ModernglWindowRenderer(self.wnd)
+        self.address = "ws://localhost:50000"
+        self.client_needs_shutdown = False
         self.args = {}
         self.selected_entity = None  # Current entity that is selected
         self.selected_instance = None  # Number instance that is selected
         self.rotating = False  # Flag for rotating entity on drag
         self.active_widget = None  # String for active widget type
-        self.widgets_align_local = 1  # Whether widgets should be axis aligned or local
+        self.widgets_align_local = 0  # Whether widgets should be axis aligned or local
         self.translate_widgets = True  # Flags for enabling and disabling widgets
         self.rotate_widgets = True
         self.scale_widgets = True
@@ -308,7 +288,11 @@ class Window(mglw.WindowConfig):
 
     def mouse_press_event(self, x: int, y: int, button: int):
 
+        # Add some timing info for debugging
+        start_time = time()
+
         # Pass event to gui
+        print("Click Registered")
         self.gui.mouse_press_event(x, y, button)
 
         # If the mouse is over a window, don't do anything
@@ -330,6 +314,8 @@ class Window(mglw.WindowConfig):
                 self.remove_widgets()
             self.selected_entity = None
             self.selected_instance = None
+            end_time = time()
+            print(f"Time to click nothing: {end_time - start_time}")
             return
 
         # Get widget type from hit
@@ -353,6 +339,8 @@ class Window(mglw.WindowConfig):
             self.selected_entity = self.client.get_delegate(entity_id)
             self.add_widgets()
 
+        end_time = time()
+        print(f"Time to select: {end_time - start_time}")
         print(f"Active Widget: {self.active_widget}")
 
     def mouse_drag_event(self, x: int, y: int, dx: int, dy: int):
@@ -362,6 +350,9 @@ class Window(mglw.WindowConfig):
         This global matrix isn't really correct, given the local transforms, but it allows the
         preview to render temporarily.
         """
+
+        # Add some timing info for debugging
+        start_time = time()
 
         # Pass event to gui
         self.gui.mouse_drag_event(x, y, dx, dy)
@@ -404,10 +395,17 @@ class Window(mglw.WindowConfig):
             entity.changed.translation = True
             entity.node.matrix_global = entity.compose_transform()
 
+        end_time = time()
+        print(f"Time to drag: {end_time - start_time}")
+
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
 
+        # Add some timing info for debugging
+        start_time = time()
+
         # Pass event to gui
+        print("Click Release Registered")
         self.gui.mouse_release_event(x, y, button)
 
         # If nothing is selected move on
@@ -433,10 +431,12 @@ class Window(mglw.WindowConfig):
                 if entity.changed.scale:
                     entity.set_scale(entity.scale.tolist())
 
+                # Whether widgets should be updated
                 plain_translation = not entity.changed.rotation and not entity.changed.scale
                 rotate_around_origin = entity.changed.rotation and self.origin_centered
                 local_rotation = entity.changed.rotation and self.widgets_align_local
-                if plain_translation or rotate_around_origin or local_rotation:
+                local_scale = entity.changed.scale and self.origin_centered
+                if plain_translation or rotate_around_origin or local_rotation or local_scale:
                     self.update_widgets(old, preview)
 
                 entity.changed.reset()
@@ -449,6 +449,13 @@ class Window(mglw.WindowConfig):
 
             # Turn off ghosting effect
             self.selected_entity.node.mesh.ghosting = False
+
+        end_time = time()
+        print(f"Time to release: {end_time - start_time}")
+
+    def close(self):
+        if self.client_needs_shutdown:
+            self.client.shutdown()
 
     def resize(self, width: int, height: int):
         self.gui.resize(width, height)
@@ -487,7 +494,7 @@ class Window(mglw.WindowConfig):
                               [[0, radius + offset, 0, 1], Y_WIDGET_COLOR, Y_WIDGET_ROTATION, WIDGET_SCALE],
                               [[0, 0, radius + offset, 1], Z_WIDGET_COLOR, Z_WIDGET_ROTATION, WIDGET_SCALE]],
                              np.float32)
-        instances[:, 3, :3] *= radius  # Scale widget by radius
+        instances[:, 3, :3] *= .5 * radius  # Scale widget by radius
         vao.buffer(instances, '16f/i', 'instance_matrix')
 
         # Create the node
@@ -519,7 +526,7 @@ class Window(mglw.WindowConfig):
         meshes, offsets = [], []
         if self.translate_widgets:
             meshes.append("cone.obj")
-            offsets.append(.5 * radius)
+            offsets.append(.25 * radius)
         if self.rotate_widgets:
             meshes.append("torus.obj")
             offsets.append(0)
@@ -626,7 +633,7 @@ class Window(mglw.WindowConfig):
             to_pivot, from_pivot, rotation_mat = np.identity(4), np.identity(4), np.identity(4)
             to_pivot[3, :3] = -center
             from_pivot[3, :3] = center
-            rotation_mat[:3, :3] = quaternion.as_rotation_matrix(rotation_quat)
+            rotation_mat[:3, :3] = quaternion.as_rotation_matrix(rotation_quat).T
             rotation_mat = np.matmul(to_pivot, np.matmul(rotation_mat, from_pivot))
             entity.translation = np.matmul(np.array([entity.translation[0], entity.translation[1], entity.translation[2], 1]), rotation_mat)[:3]
             entity.changed.translation = True
@@ -640,7 +647,8 @@ class Window(mglw.WindowConfig):
         direction = self.selected_instance
         center, radius = entity.node.mesh.bounding_sphere
         deltas = np.array([dx, dy, dz])
-        origin = current_mat_global[:3, 3]
+        origin = entity.node.matrix[3, :3]
+        # origin = current_mat_global[3, :3]
         widgets = self.scene.find_node("Widgets")
 
         # Scale in direction of widget
@@ -649,18 +657,44 @@ class Window(mglw.WindowConfig):
         rotated_scale = quaternion.rotate_vectors(entity.rotation, widget_vec)
         entity.scale += rotated_scale * magnitude
 
-        # Translate to keep things centered
-        entity.translation -= widget_vec * magnitude * (radius / 2) * (center - origin)
-        entity.changed.translation = True
+        # 1.
+        # to_pivot, from_pivot, transform_mat = np.identity(4), np.identity(4), np.identity(4)
+        # to_pivot[3, :3] = -center
+        # from_pivot[3, :3] = center
+        #
+        # # Use pieces to construct the marginal transform that is being applied
+        # rotated_scale *= (radius / 2)
+        # marginal_scale = np.diag(rotated_scale * magnitude)
+        # marginal_scale[0, 0] += 1
+        # marginal_scale[1, 1] += 1
+        # marginal_scale[2, 2] += 1
+        # transform_mat[:3, :3] = marginal_scale
+        # transform_mat = np.matmul(to_pivot, np.matmul(transform_mat, from_pivot))
+        #
+        # # Apply transform to the old translation
+        # entity.translation = np.matmul(
+        #     np.array([entity.translation[0], entity.translation[1], entity.translation[2], 1]), transform_mat)[:3]
+        #entity.translation = np.matmul(np.array([origin[0], origin[1], origin[2], 1]), transform_mat)[:3]
+
+        # 2.  problem is this origin also has some scaling baked in
+        # old_scale = entity.scale - (rotated_scale * magnitude)
+        # shifted_origin = (origin) - center
+        # scaled = shifted_origin * old_scale
+        # new_scaled = shifted_origin * entity.scale
+        # entity.translation = entity.translation - (scaled - new_scaled)
+
+        # If centered around center, then add translate to keep centered
+        # Problem is when the origin placement is different
+        # - for example if origin is already at center, then no need to translate
+        if not self.origin_centered:
+            entity.translation -= widget_vec * magnitude
+            entity.changed.translation = True
 
         # Add the scaling to the current matrix
         entity.changed.scale = True
         entity.node.matrix_global = entity.compose_transform()
 
     def render_scene_to_framebuffer(self, x, y):
-
-        # Clear the framebuffer to max value 32 bit int
-        self.framebuffer.clear()
 
         # Swap mesh programs to the frame select program
         old_programs = {}
@@ -669,6 +703,7 @@ class Window(mglw.WindowConfig):
             mesh.mesh_program = programs.FrameSelectProgram(self, mesh.mesh_program.num_instances)
 
         self.framebuffer.use()
+        self.framebuffer.clear()
         self.scene.draw(
             projection_matrix=self.camera.projection.matrix,
             camera_matrix=self.camera.matrix
@@ -677,6 +712,9 @@ class Window(mglw.WindowConfig):
         # Swap back to the old programs
         for mesh in self.scene.meshes:
             mesh.mesh_program = old_programs[(mesh.entity_id, mesh.name)]
+
+        # Bind the default framebuffer to switch back
+        self.ctx.screen.use()
 
         return self.framebuffer.read(components=4, viewport=(x, self.wnd.height-y, 1, 1), dtype='u4')
 
@@ -688,7 +726,6 @@ class Window(mglw.WindowConfig):
         At each frame, the callback_queue is checked so the client can update the render
         Note: each callback has the window as the first arg
         """
-
         self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE | moderngl.BLEND)
 
         # Render skybox
@@ -706,6 +743,13 @@ class Window(mglw.WindowConfig):
             time=time,
         )
 
+        # Show log in window if client is still not connected
+        if self.client is None:
+            self.render_login()
+            imgui.render()
+            self.gui.render(imgui.get_draw_data())
+            return
+
         # Render GUI elements
         self.update_gui()
         imgui.render()
@@ -716,6 +760,34 @@ class Window(mglw.WindowConfig):
             callback, args = callback_info
             logging.info(f"Callback in render: {callback.__name__} \n\tw/ args: {args}")
             callback(self, *args)
+
+        # Clean up any dead objects
+        self.ctx.gc()
+
+    def render_login(self):
+        imgui.new_frame()
+        imgui.begin("Connect to Server")
+        imgui.text("Enter Websocket Address")
+        changed, self.address = imgui.input_text("Address", self.address, 256)
+        if imgui.button("Connect"):
+            self.client = penne.Client(self.address, delegate_map)
+            self.client.thread.start()  # Starts websocket connection in new thread
+            self.client.connection_established.wait()
+            self.client_needs_shutdown = True
+        imgui.end()
+
+        # Scene Info
+        self.render_scene_info()
+
+    def render_scene_info(self):
+        # Scene Info
+        imgui.begin("Basic Info")
+        imgui.text(f"Camera Position: {self.camera_position}")
+        imgui.text(f"Press 'Space' to toggle camera/GUI")
+        imgui.text(f"Click and drag an entity to move it")
+        imgui.text(f"Hold 'r' while dragging to rotate an entity")
+        _, self.draw_bs = imgui.checkbox("Show Bounding Spheres", self.draw_bs)
+        imgui.end()
 
     def render_document(self):
         imgui.begin("Document")
@@ -758,9 +830,8 @@ class Window(mglw.WindowConfig):
             if imgui.begin_menu("File", True):
 
                 clicked_quit, selected_quit = imgui.menu_item("Quit", 'Cmd+Q', False, True)
-
                 if clicked_quit:
-                    exit(1)  # Need to hook this up to window
+                    self.close()
                 imgui.end_menu()
             if imgui.begin_menu("Settings", True):
 
@@ -825,14 +896,7 @@ class Window(mglw.WindowConfig):
                 imgui.end_menu()
             imgui.end_main_menu_bar()
 
-        # Scene Info
-        imgui.begin("Basic Info")
-        imgui.text(f"Camera Position: {self.camera_position}")
-        imgui.text(f"Press 'Space' to toggle camera/GUI")
-        imgui.text(f"Click and drag an entity to move it")
-        imgui.text(f"Hold 'r' while dragging to rotate an entity")
-        _, self.draw_bs = imgui.checkbox("Show Bounding Spheres", self.draw_bs)
-        imgui.end()
+        self.render_scene_info()
 
         # Render Document Methods and Signals or selection
         if self.selected_entity is None:

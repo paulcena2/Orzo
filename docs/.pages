@@ -2,4 +2,5 @@ nav:
     - index.md
     - install.md
     - basic_usage.md
+    - contributing.md
     - noodles.md

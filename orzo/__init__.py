@@ -2,4 +2,4 @@
 
 __version__ = "0.2.1"
 
-from .core import run, Client
+from .core import run, connect, Client
