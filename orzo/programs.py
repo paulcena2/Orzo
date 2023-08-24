@@ -12,8 +12,10 @@ current_dir = os.path.dirname(__file__)
 
 
 class PhongProgram(MeshProgram):
-    """
-    Instance Rendering Program with Phong Shading
+    """Instance Rendering Program with Phong Shading
+
+    Passes all necessary information to shaders and applies affects like highlighting and ghosting.
+    Draws bounding sphere if enabled. Also inputs the default lighting.
     """
     current_camera_matrix = None
     camera_position = None
@@ -143,8 +145,6 @@ class PhongProgram(MeshProgram):
         for i, light in zip(range(num_lights), lights):
             for attr, val in light.items():
                 self.program[f"lights[{i}].{attr}"].value = val
-        # print(f"Light Positions: {[light.get('world_position') for light in lights]}")
-        # print(f"Camera Position: {BaseProgram.camera_position}")
 
         # Hack to change culling for double_sided material
         if mesh.material.double_sided:
@@ -160,8 +160,10 @@ class PhongProgram(MeshProgram):
 
 
 class FrameSelectProgram(MeshProgram):
-    """
-    Instance Rendering Program with Phong Shading
+    """Render scene to frame buffer for selection
+
+    Really simple render but instead of 'color' there is a vec4 of the following format
+    [entity_id_slot, entity_id_gen, instance_number, hit_value]
     """
 
     current_camera_matrix = None
@@ -202,7 +204,7 @@ class FrameSelectProgram(MeshProgram):
         self.program["m_cam"].write(camera_matrix)
         self.program["id"].value = tuple(mesh.entity_id)
 
-        # Set flag for widget or actual entity
+        # Set flag for widget or actual entity - hit value is zero anywhere there is no mesh
         if mesh.name == "noo::widget_cone":
             self.program["hit_value"].value = 2
         elif mesh.name == "noo::widget_torus":

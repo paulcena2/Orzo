@@ -11,7 +11,6 @@ import io
 import urllib.request
 import json
 import copy
-from collections import namedtuple
 
 from penne import *
 
@@ -27,6 +26,10 @@ from . import programs
 
 @dataclass
 class FormatInfo:
+    """Information about a format
+
+    Helpful for mapping between noodle and moderngl formats
+    """
     num_components: int
     format: str
     size: int  # in bytes
@@ -50,8 +53,8 @@ class ChangeTracker:
         self.scale = False
 
 
+# (num components, format per component, size per component)
 FORMAT_MAP = {
-    # (num components, format per component, size per component)
     "U8": FormatInfo(1, 'u1', 1),
     "U16": FormatInfo(1, 'u2', 2),
     "U32": FormatInfo(1, 'u4', 4),
@@ -196,12 +199,6 @@ class SignalDelegate(Signal):
             client delegate is a part of
     """
 
-    def on_new(self, message: dict):
-        pass
-
-    def on_remove(self, message: dict):
-        pass
-
     def gui_rep(self):
         """Representation to be displayed in GUI"""
         imgui.text(f"{self.name}")
@@ -271,9 +268,15 @@ class EntityDelegate(Entity):
     In the scene, this is implemented with a moderngl-window node. This node has a local and global matrix which
     are updated to reflect the entities transform. The node also has a list of children which contain patches for
     the meshes. If the entity has a mesh, a version is stored in the entities node to use as a ghost preview. Another
-    is stored in the child node.
+    is stored in the child node. This may misbehave with multiple patches, but for now it works well enough.
 
     Lights are attached to the scene and updated with the entity's transform.
+
+    !!! note
+
+        All transforms should be column major order (OpenGL style). This is not the same as the
+        numpy default row major, so be careful when using numpy arrays. Transposing then multiplying
+        is the same as swapping the order, so many times you'll see the order swapped.
     
     Attributes:
         name (str): Name of the entity, defaults to 'No-Name Entity'
@@ -291,7 +294,7 @@ class EntityDelegate(Entity):
     num_instances: Optional[int] = 0
     np_transform: Optional[np.ndarray] = np.eye(4)
 
-    # These correspond to current state -> preview
+    # These correspond to current state / preview
     translation: Optional[np.ndarray] = np.array([0.0, 0.0, 0.0])
     rotation: Optional[np.quaternion] = np.quaternion(1.0, 0.0, 0.0, 0.0)  # w, x, y, z
     scale: Optional[np.ndarray] = np.array([1.0, 1.0, 1.0])
@@ -300,8 +303,10 @@ class EntityDelegate(Entity):
     def render_entity(self, window):
         """Render the mesh associated with this delegate
         
-        Will be called as callback from window
+        Will be called as callback from window. Largely hands the work off to the geometry delegate
         """
+
+        assert self.render_rep is not None, "Entity must have a render representation to render"
 
         # Prepare Mesh
         geometry = self.client.get_delegate(self.render_rep.mesh)
@@ -318,7 +323,11 @@ class EntityDelegate(Entity):
         window.remove_node(self.node)
 
     def attach_lights(self, window):
-        """Callback to handle lights attached to an entity"""
+        """Callback to handle lights attached to an entity
+
+        Light info is stored directly in the window. This info is used in the
+        mesh program to pass lights into the shader.
+        """
 
         self.light_delegates = []  # Reset in case of update
         for light_id in self.lights:
@@ -343,13 +352,8 @@ class EntityDelegate(Entity):
 
     def update_lights(self, window):
         """Callback for updating lights on window and delegate"""
-
-        # Remove old lights
-        for light in self.light_delegates:
-            window.lights.remove(light.id)
-
-        # Update with new lights
-        self.client.callback_queue.put((self.attach_lights, []))
+        self.remove_lights(window)
+        self.attach_lights(window)
 
     def remove_lights(self, window):
         """Callback for removing lights from state"""
@@ -360,7 +364,8 @@ class EntityDelegate(Entity):
     def compose_transform(self, translation=None, rotation=None, scale=None):
         """Get a transform matrix given the current scale, rotation, and position
 
-        Defaults to using current state, but can also accept args to use other values
+        Defaults to using current state, but can also accept args to use other values.
+        Inputs should be numpy arrays or numpy-quaternions
         """
         if translation is None:
             translation = self.translation
@@ -371,15 +376,16 @@ class EntityDelegate(Entity):
 
         transform = np.eye(4)
         transform[3, :3] = translation
-        transform[:3, :3] = np.matmul(np.diag(scale), quaternion.as_rotation_matrix(rotation))
+        transform[:3, :3] = np.matmul(np.diag(scale), quaternion.as_rotation_matrix(rotation)).T
         return transform
 
     def decompose_transform(self):
+        """Get the current scale, rotation, and position from the transform matrix"""
         self.translation = self.np_transform[3, :3]
         self.scale = np.linalg.norm(self.np_transform[:3, :3], axis=1)
         inverse_scale = np.linalg.inv(np.diag(self.scale))
         without_scale = np.matmul(inverse_scale, self.np_transform[:3, :3])
-        self.rotation = quaternion.from_rotation_matrix(without_scale)
+        self.rotation = quaternion.from_rotation_matrix(without_scale.T)
 
     def get_world_transform(self):
         """Get the current world transform for the entity"""
@@ -421,7 +427,7 @@ class EntityDelegate(Entity):
         if self.lights:
             self.client.callback_queue.put((self.attach_lights, []))
 
-        # Hooke up methods and signals
+        # Hook up methods and signals
         if self.methods_list:
             inject_methods(self, self.methods_list)
         if self.signals_list:
@@ -489,7 +495,7 @@ class EntityDelegate(Entity):
                 light.gui_rep()
 
         if self.transform is not None:
-            imgui.text(f"Transform: {self.transform}")
+            imgui.text(f"Transform: {self.np_transform}")
 
         imgui.text(f"Attached Methods: {self.methods_list}")
         if self.method_delegates:

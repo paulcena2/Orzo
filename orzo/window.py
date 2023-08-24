@@ -1,5 +1,6 @@
 import logging
 import os
+from time import time
 
 import moderngl_window as mglw
 import moderngl
@@ -51,33 +52,6 @@ SPECIFIER_MAP = {
 }
 
 
-def get_char(cls, number):
-    for attr_name, attr_value in cls.__dict__.items():
-        if attr_value == number:
-            return attr_name[-1]
-    return None  # Return None if the number is not found in the mapping
-
-
-def get_scale(mat):
-    """Get x, y, and z scale from a matrix"""
-    return np.array([np.linalg.norm(mat[0, :3]), np.linalg.norm(mat[1, :3]), np.linalg.norm(mat[2, :3])])
-
-
-def get_rotation(mat, x, y, z):
-    """Get rotation quaternion from a matrix given the scales"""
-    mat[0, :3] /= x
-    mat[1, :3] /= y
-    mat[2, :3] /= z
-    quat = quaternion.from_rotation_matrix(mat)
-    quat = quaternion.as_float_array(quat)
-    quat[0], quat[1], quat[2], quat[3] = quat[1], quat[2], quat[3], quat[0]
-    return quat
-
-
-def get_translation(mat):
-    return mat[3, :3]
-
-
 def get_distance_to_mesh(camera_pos, mesh):
     """Get the distance from the camera to the mesh"""
     mesh_position = mesh.node.matrix_global[3, :3]
@@ -103,9 +77,6 @@ class Window(mglw.WindowConfig):
     title = "Orzo Window"
     resizable = True
     client = None
-
-    # vsync=True
-    # MATCH SCREEN RATE
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -144,9 +115,12 @@ class Window(mglw.WindowConfig):
         self.shininess = DEFAULT_SHININESS
         self.spec_strength = DEFAULT_SPEC_STRENGTH
 
+        # Tried using imgui pyglet integration before, but switched to moderngl_window's integration
+        # Could be worth taking another look at if event input problems are persistent
+        # self.gui = create_renderer(self.wnd._window)
+
         # Set up GUI
         imgui.create_context()
-        # self.gui = create_renderer(self.wnd._window)
         self.gui = ModernglWindowRenderer(self.wnd)
         self.address = "ws://localhost:50000"
         self.client_needs_shutdown = False
@@ -314,6 +288,9 @@ class Window(mglw.WindowConfig):
 
     def mouse_press_event(self, x: int, y: int, button: int):
 
+        # Add some timing info for debugging
+        start_time = time()
+
         # Pass event to gui
         print("Click Registered")
         self.gui.mouse_press_event(x, y, button)
@@ -337,6 +314,8 @@ class Window(mglw.WindowConfig):
                 self.remove_widgets()
             self.selected_entity = None
             self.selected_instance = None
+            end_time = time()
+            print(f"Time to click nothing: {end_time - start_time}")
             return
 
         # Get widget type from hit
@@ -360,6 +339,8 @@ class Window(mglw.WindowConfig):
             self.selected_entity = self.client.get_delegate(entity_id)
             self.add_widgets()
 
+        end_time = time()
+        print(f"Time to select: {end_time - start_time}")
         print(f"Active Widget: {self.active_widget}")
 
     def mouse_drag_event(self, x: int, y: int, dx: int, dy: int):
@@ -369,6 +350,9 @@ class Window(mglw.WindowConfig):
         This global matrix isn't really correct, given the local transforms, but it allows the
         preview to render temporarily.
         """
+
+        # Add some timing info for debugging
+        start_time = time()
 
         # Pass event to gui
         self.gui.mouse_drag_event(x, y, dx, dy)
@@ -411,8 +395,14 @@ class Window(mglw.WindowConfig):
             entity.changed.translation = True
             entity.node.matrix_global = entity.compose_transform()
 
+        end_time = time()
+        print(f"Time to drag: {end_time - start_time}")
+
     def mouse_release_event(self, x: int, y: int, button: int):
         """On release, officially send request to move the object"""
+
+        # Add some timing info for debugging
+        start_time = time()
 
         # Pass event to gui
         print("Click Release Registered")
@@ -460,6 +450,9 @@ class Window(mglw.WindowConfig):
             # Turn off ghosting effect
             self.selected_entity.node.mesh.ghosting = False
 
+        end_time = time()
+        print(f"Time to release: {end_time - start_time}")
+
     def close(self):
         if self.client_needs_shutdown:
             self.client.shutdown()
@@ -501,7 +494,7 @@ class Window(mglw.WindowConfig):
                               [[0, radius + offset, 0, 1], Y_WIDGET_COLOR, Y_WIDGET_ROTATION, WIDGET_SCALE],
                               [[0, 0, radius + offset, 1], Z_WIDGET_COLOR, Z_WIDGET_ROTATION, WIDGET_SCALE]],
                              np.float32)
-        instances[:, 3, :3] *= radius  # Scale widget by radius
+        instances[:, 3, :3] *= .5 * radius  # Scale widget by radius
         vao.buffer(instances, '16f/i', 'instance_matrix')
 
         # Create the node
@@ -533,7 +526,7 @@ class Window(mglw.WindowConfig):
         meshes, offsets = [], []
         if self.translate_widgets:
             meshes.append("cone.obj")
-            offsets.append(.5 * radius)
+            offsets.append(.25 * radius)
         if self.rotate_widgets:
             meshes.append("torus.obj")
             offsets.append(0)
@@ -640,7 +633,7 @@ class Window(mglw.WindowConfig):
             to_pivot, from_pivot, rotation_mat = np.identity(4), np.identity(4), np.identity(4)
             to_pivot[3, :3] = -center
             from_pivot[3, :3] = center
-            rotation_mat[:3, :3] = quaternion.as_rotation_matrix(rotation_quat)
+            rotation_mat[:3, :3] = quaternion.as_rotation_matrix(rotation_quat).T
             rotation_mat = np.matmul(to_pivot, np.matmul(rotation_mat, from_pivot))
             entity.translation = np.matmul(np.array([entity.translation[0], entity.translation[1], entity.translation[2], 1]), rotation_mat)[:3]
             entity.changed.translation = True
@@ -664,20 +657,7 @@ class Window(mglw.WindowConfig):
         rotated_scale = quaternion.rotate_vectors(entity.rotation, widget_vec)
         entity.scale += rotated_scale * magnitude
 
-        # Translate to keep things centered
-        # entity.translation -= widget_vec * magnitude * (radius / 2) * (center - origin)
-        # shifted_origin = origin-center
-        # shifted_origin = np.array([shifted_origin[0], shifted_origin[1], shifted_origin[2], 1])
-        # #old_scale = entity.scale - (rotated_scale * magnitude)
-        # #old_mat = entity.compose_transform(scale=old_scale)
-        # new_mat = entity.compose_transform()
-        # #old_center = np.dot(old_mat.T, shifted_origin)[:3]
-        # new_so = np.dot(new_mat.T, shifted_origin)[:3]
-        # entity.translation = new_so + center
-        # entity.changed.translation = True
-
-        # The translation moves faster than the scale
-        #
+        # 1.
         # to_pivot, from_pivot, transform_mat = np.identity(4), np.identity(4), np.identity(4)
         # to_pivot[3, :3] = -center
         # from_pivot[3, :3] = center
@@ -696,10 +676,7 @@ class Window(mglw.WindowConfig):
         #     np.array([entity.translation[0], entity.translation[1], entity.translation[2], 1]), transform_mat)[:3]
         #entity.translation = np.matmul(np.array([origin[0], origin[1], origin[2], 1]), transform_mat)[:3]
 
-        # entity.translation = origin - (entity.translation - origin) * (1 + magnitude)
-        # entity.translation -= widget_vec * magnitude * (radius) * (center - origin)
-
-        # problem is this origin also has some scaling baked in
+        # 2.  problem is this origin also has some scaling baked in
         # old_scale = entity.scale - (rotated_scale * magnitude)
         # shifted_origin = (origin) - center
         # scaled = shifted_origin * old_scale
@@ -707,6 +684,8 @@ class Window(mglw.WindowConfig):
         # entity.translation = entity.translation - (scaled - new_scaled)
 
         # If centered around center, then add translate to keep centered
+        # Problem is when the origin placement is different
+        # - for example if origin is already at center, then no need to translate
         if not self.origin_centered:
             entity.translation -= widget_vec * magnitude
             entity.changed.translation = True
@@ -717,9 +696,6 @@ class Window(mglw.WindowConfig):
 
     def render_scene_to_framebuffer(self, x, y):
 
-        # Clear the framebuffer to max value 32 bit int
-        self.framebuffer.clear()
-
         # Swap mesh programs to the frame select program
         old_programs = {}
         for mesh in self.scene.meshes:
@@ -727,6 +703,7 @@ class Window(mglw.WindowConfig):
             mesh.mesh_program = programs.FrameSelectProgram(self, mesh.mesh_program.num_instances)
 
         self.framebuffer.use()
+        self.framebuffer.clear()
         self.scene.draw(
             projection_matrix=self.camera.projection.matrix,
             camera_matrix=self.camera.matrix
@@ -749,7 +726,6 @@ class Window(mglw.WindowConfig):
         At each frame, the callback_queue is checked so the client can update the render
         Note: each callback has the window as the first arg
         """
-
         self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE | moderngl.BLEND)
 
         # Render skybox
@@ -801,13 +777,7 @@ class Window(mglw.WindowConfig):
         imgui.end()
 
         # Scene Info
-        imgui.begin("Basic Info")
-        imgui.text(f"Camera Position: {self.camera_position}")
-        imgui.text(f"Press 'Space' to toggle camera/GUI")
-        imgui.text(f"Click and drag an entity to move it")
-        imgui.text(f"Hold 'r' while dragging to rotate an entity")
-        _, self.draw_bs = imgui.checkbox("Show Bounding Spheres", self.draw_bs)
-        imgui.end()
+        self.render_scene_info()
 
     def render_scene_info(self):
         # Scene Info
