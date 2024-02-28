@@ -596,14 +596,16 @@ class GeometryDelegate(Geometry):
 
     @staticmethod
     def reformat_color(raw_bytes, color_format):
-        """Reformat all colors to consistent u8vec4's"""
+        """Reformat all colors to consistent u8vec4's"""  "Jonny change 9/21, color needs to be in Vec4"
 
-        if color_format == "U8VEC4":
+        if color_format == "VEC4":
             return raw_bytes
+        else: 
+            print("color format thats not VEC4",color_format)
 
-        vals = np.frombuffer(raw_bytes, dtype=NP_FORMAT_MAP[color_format])
+        vals = np.frombuffer(raw_bytes, dtype=NP_FORMAT_MAP["VEC4"])
         max_val = np.finfo(np.single).max
-        vals *= max_val  # not sure about this
+        vals = vals * max_val  # not sure about this
 
         if color_format == "VEC3":
             # Pad to 4
@@ -611,7 +613,7 @@ class GeometryDelegate(Geometry):
             col = np.array([1] * len(grouped))
             vals = np.append(grouped, col, axis=1)
 
-        reformatted = vals.astype(np.int8).tobytes()
+        reformatted = vals.astype(np.single).tobytes()
         return reformatted
 
     def set_up_indices(self, patch, vao):
@@ -619,7 +621,9 @@ class GeometryDelegate(Geometry):
 
         Also returns the indices as a numpy array
         """
+
         index = patch.indices
+
         if index:
             index_view = self.client.get_delegate(index.view)
             index_format = FORMAT_MAP[index.format]
@@ -637,7 +641,8 @@ class GeometryDelegate(Geometry):
 
         # Create the buffer and store it in the VAO
         vao.index_buffer(index_bytes, index_size)
-        return indices.reshape((-1, 3))
+        ### deleted indices.reshape((-1, 3)) to test
+        return indices
 
     def set_up_attributes(self, patch, mesh, indices):
         """Take care of setting up attributes for a mesh
@@ -663,7 +668,7 @@ class GeometryDelegate(Geometry):
             # Reformat colors to consistent u8vec4's
             if attribute.semantic == "COLOR":
                 attr_bytes = GeometryDelegate.reformat_color(attr_bytes, attribute.format)
-                buffer_format = "4u1"
+                buffer_format = "4f4" #search here Jonny 9/27
 
             # Calculate normals if they are missing
             if attribute.semantic == "POSITION":

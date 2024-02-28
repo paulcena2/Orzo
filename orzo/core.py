@@ -5,7 +5,6 @@ import penne
 from .delegates import delegate_map
 from .window import Window
 
-
 def run():
     """Opens Orzo allows user to connect with a GUI"""
     Window.run()
@@ -61,6 +60,7 @@ class Client(object):
         # Create Client
         render_client = penne.Client(self.address, delegate_map, self.on_connected)
         render_client.thread.start()
+        render_client.ping_timeout = 300
         render_client.connection_established.wait()
 
         # Create Window and start rendering loop
@@ -74,5 +74,6 @@ class Client(object):
         self.window.client.shutdown()
         self.window.close()
         logging.info(f"Finished Running Orzo Client")
+        
 
 
