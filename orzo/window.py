@@ -1,7 +1,7 @@
 import logging
 import os
 from time import time
-
+import time as timy
 import moderngl_window as mglw
 import moderngl
 import numpy as np
@@ -11,10 +11,14 @@ import imgui
 from imgui.integrations.pyglet import create_renderer
 from moderngl_window.integrations.imgui import ModernglWindowRenderer
 import penne
-
 from orzo import programs
 from orzo.delegates import delegate_map
 
+import openai
+from openai import OpenAI
+import os
+
+client = OpenAI(api_key='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')
 
 current_dir = os.path.dirname(__file__)
 
@@ -110,7 +114,9 @@ class Window(mglw.WindowConfig):
         self.root.matrix_global = np.identity(4, np.float32)
         self.scene.root_nodes.append(self.root)
         self.scene.cameras.append(self.camera)
-
+        self.user1_input = ''
+        self.user2_input = ''
+        self.conversation_log = []
         # Store shader settings
         self.shininess = DEFAULT_SHININESS
         self.spec_strength = DEFAULT_SPEC_STRENGTH
@@ -137,6 +143,7 @@ class Window(mglw.WindowConfig):
 
         # Flag for rendering bounding spheres on mesh, can be toggled in GUI
         self.draw_bs = False
+        self.chat_gpt_dialog_open = False
 
         # Set up skybox
         self.skybox_on = True
@@ -728,6 +735,7 @@ class Window(mglw.WindowConfig):
         """
         self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE | moderngl.BLEND)
 
+        imgui.new_frame()
         # Render skybox
         if self.skybox_on:
             self.ctx.front_face = 'cw'
@@ -742,6 +750,12 @@ class Window(mglw.WindowConfig):
             camera_matrix=self.camera.matrix,
             time=time,
         )
+        
+        if self.chat_gpt_dialog_open:
+            self.render_text_dialogue()
+
+        
+        
 
         # Show log in window if client is still not connected
         if self.client is None:
@@ -765,7 +779,7 @@ class Window(mglw.WindowConfig):
         self.ctx.gc()
 
     def render_login(self):
-        imgui.new_frame()
+        #imgui.new_frame()
         imgui.begin("Connect to Server")
         imgui.text("Enter Websocket Address")
         changed, self.address = imgui.input_text("Address", self.address, 256)
@@ -774,7 +788,7 @@ class Window(mglw.WindowConfig):
             self.client.thread.start()  # Starts websocket connection in new thread
             self.client.connection_established.wait()
             self.client_needs_shutdown = True
-        imgui.end()
+        #imgui.end()
 
         # Scene Info
         self.render_scene_info()
@@ -809,8 +823,6 @@ class Window(mglw.WindowConfig):
         imgui.end()
 
     def update_gui(self):
-
-        imgui.new_frame()
         state = self.client.state
 
         # Main Menu
@@ -841,7 +853,11 @@ class Window(mglw.WindowConfig):
                 # Skybox
                 clicked, self.skybox_on = imgui.checkbox("Use Skybox", self.skybox_on)
 
-                # Camera Settings
+                # GPT Dialogu
+                clicked_gpt, self.chat_gpt_dialog_open = imgui.checkbox("Visualize with ChatGPT", self.chat_gpt_dialog_open)
+                
+    
+                # Camera Settingsx
                 imgui.menu_item("Camera Settings", None, False, True)
                 changed, speed = imgui.slider_float("Speed", self.camera.velocity, 0.0, 10.0, format="%.0f")
                 if changed:
@@ -906,3 +922,65 @@ class Window(mglw.WindowConfig):
             self.selected_entity.gui_rep()
             imgui.text(f"Instance: {self.selected_instance}")
             imgui.end()
+    def render_text_dialogue(self):
+        chat_response = "Chat GPT Response: \n"
+        if imgui.begin("Chat GPT Conversation Log"):
+        # Input text field for User 1's notes
+            changed, self.user1_input = imgui.input_text("User 1 Notes", self.user1_input, 256)
+            #changed, self.user2_input = imgui.input_text("Chat GPT response",s)
+            if imgui.button("Send to Chat"):
+                chat_response += self.send_to_chat(self.user1_input)
+            imgui.text_wrapped(chat_response)
+            
+        imgui.end() 
+
+    def wait_on_run(self,run, thread):
+        while run.status == "queued" or run.status == "in_progress":
+            run = client.beta.threads.runs.retrieve(
+            thread_id=thread.id,
+            run_id=run.id,
+            )
+            timy.sleep(0.5)
+        return run
+
+    def send_to_chat(self, user_input):
+        assistant_id = 'FILL IN ASSITANT ID'
+        example_input = """I am an assistant converting casual descriptions into structured parameters. Here are some examples:
+            Example 1: 
+            Input = "I want a green cube that is scaled to size 0.4 and has an opacity of 0.5"
+            Parameters = [color : (0,255,0), scale: 0.4, opacity: 0.5, texture = None]
+            
+            Example 2:
+            Input =  "I want an isosurface that is fusia, has a scale of 0.9 its original size and a texture of 0.1"
+            Parameters = [color: (255,0,255), scale: 0.9, opacity: None, texture: 0.1]
+
+            Example 3:
+            Input = "I want to animate my provided files with a fps of 40 and a scale size of 0.8 that is located at the origin"
+            Parameters = [color: None, scale: 0.8, fps: 40, position: [0,0,0]]
+
+            Now, convert the following user input into structured parameters: 
+            """
+# Create a thread where the conversation will happen
+        thread = client.beta.threads.create()
+        thread_id = thread.id
+        # Create the user message and add it to the thread
+        message = client.beta.threads.messages.create(
+        thread_id=thread.id,
+        role="user",
+        content=example_input + user_input,
+        )
+
+# Create the Run, passing in the thread and the assistant
+        run = client.beta.threads.runs.create(
+            thread_id=thread.id,
+            assistant_id=assistant_id,
+            instructions = "Please address the user as Sir Noodles"
+            )
+
+        run = self.wait_on_run(run, thread)
+
+
+        response = client.beta.threads.messages.list(thread_id=thread.id, order="asc")
+        if hasattr(response.data[-1].content[0], 'text'):
+            output = response.data[-1].content[0].text.value
+        return output
