@@ -18,7 +18,7 @@ import openai
 from openai import OpenAI
 import os
 
-client = OpenAI(api_key='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')
+client = OpenAI(api_key=)
 
 current_dir = os.path.dirname(__file__)
 
